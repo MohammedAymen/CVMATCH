@@ -7,4 +7,8 @@ tenacity
 loguru
 playwright
 langchain-text-splitters
-sentence-transformers chromadb
+sentence-transformers
+chromadb
+tqdm
+pymupdf
+einops
