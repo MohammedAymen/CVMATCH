@@ -6,7 +6,7 @@ from core.logger import logger
 from typing import List
 import re
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-
+from typing import List, Dict, Any 
 
 def _clean_text(text: str) -> str:
     text = re.sub(r"\n{3,}", "\n\n", text)
@@ -57,3 +57,24 @@ def chunk_cv(cv_text: str, chunk_size: int = 500, overlap: int = 100) -> List[st
         logger.error(f"Error chunking CV text: {str(e)}")
         return [cv_text]  
     
+
+
+def load_cv_documents(cv_path: str,chunk_size: int = 500,overlap: int = 100) -> List[Dict[str, Any]]:
+    
+    full_text = load_cv(cv_path)
+    if not full_text:
+        return []
+    
+    chunks = chunk_cv(full_text, chunk_size, overlap)
+    
+    documents = []
+    for i, chunk in enumerate(chunks):
+        documents.append({
+            "text": chunk,
+            "metadata": {
+                "source": "cv",
+                "chunk_index": i,
+                "total_chunks": len(chunks)
+            }
+        })
+    return documents

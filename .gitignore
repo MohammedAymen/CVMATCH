@@ -1,4 +1,10 @@
 __pycache__/
+*.pyc
 .env
-*.faiss
 *.pkl
+*.pdf
+chroma/
+db/
+*.sqlite3
+*.db
+*.log

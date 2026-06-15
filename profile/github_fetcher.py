@@ -282,9 +282,7 @@ class GitHubFetcher:
         logger.error(f"GraphQL request failed after retries: {last_error}")
         return None
 
-    # ------------------------------------------------------------------ #
-    # REST: profile
-    # ------------------------------------------------------------------ #
+    # REST 
     def fetch_user_profile(self, username: str) -> Dict[str, Any]:
         cache_key = f"profile:{username}"
         if self._cache:
@@ -316,21 +314,14 @@ class GitHubFetcher:
             self._cache.set(cache_key, profile)
         return profile
 
-    # ------------------------------------------------------------------ #
-    # REST: repos
-    # ------------------------------------------------------------------ #
+    
     def fetch_repos(
         self,
         username: str,
         max_repos: int = 30,
         max_pages: int = DEFAULT_MAX_REPO_PAGES,
     ) -> List[Dict]:
-        """
-        يجلب الـ repos الخاصة بالمستخدم (غير الـ forks)، مرتبة حسب النجوم.
-
-        max_pages يحدد أقصى عدد صفحات (100 repo/صفحة) لتجنب استهلاك rate limit
-        كامل مع حسابات بها مئات الـ repos.
-        """
+    
         cache_key = f"repos:{username}:{max_repos}:{max_pages}"
         if self._cache:
             cached = self._cache.get(cache_key)
@@ -386,12 +377,7 @@ class GitHubFetcher:
         repos: List[Dict],
         max_repos_for_languages: int = DEFAULT_MAX_REPOS_FOR_LANGUAGES,
     ) -> Dict[str, int]:
-        """
-        يجمع اللغات من الـ repos دون عمل request لكل repo:
-        - يستخدم primary_language (متوفر بالفعل مع كل repo) كقاعدة أساسية.
-        - يجلب التفاصيل الدقيقة فقط لأهم max_repos_for_languages (الـ repos
-          الأعلى نجومًا، وهي مرتبة بالفعل).
-        """
+        
         lang_bytes: Dict[str, int] = defaultdict(int)
 
         for repo in repos:
@@ -409,9 +395,6 @@ class GitHubFetcher:
 
         return dict(lang_bytes)
 
-    # ------------------------------------------------------------------ #
-    # GraphQL: كل البيانات في طلب واحد (يتطلب token)
-    # ------------------------------------------------------------------ #
     def fetch_profile_via_graphql(
         self, username: str, max_repos: int = 30, langs_per_repo: int = 5
     ) -> Optional[Dict[str, Any]]:
@@ -438,9 +421,7 @@ class GitHubFetcher:
             self._cache.set(cache_key, data)
         return data
 
-    # ------------------------------------------------------------------ #
-    # تحويل نتائج GraphQL لنفس شكل بيانات REST الداخلي
-    # ------------------------------------------------------------------ #
+   
     @staticmethod
     def _graphql_user_to_profile(user: Dict) -> Dict[str, Any]:
         return {
@@ -491,9 +472,7 @@ class GitHubFetcher:
                 lang_bytes[lang] += size
         return dict(lang_bytes)
 
-    # ------------------------------------------------------------------ #
-    # بناء النصوص
-    # ------------------------------------------------------------------ #
+   
     def build_profile_text(self, profile: Dict) -> str:
         if not profile:
             return ""
@@ -549,9 +528,7 @@ class GitHubFetcher:
             lines.append(f"  - {lang}: {pct:.1f}%")
         return "\n".join(lines)
 
-    # ------------------------------------------------------------------ #
-    # Chunking helpers
-    # ------------------------------------------------------------------ #
+   
     def _split_if_needed(
         self,
         text: str,
@@ -589,14 +566,7 @@ class GitHubFetcher:
         username: str,
         max_chars: int = DEFAULT_MAX_CHUNK_CHARS,
     ) -> List[Dict[str, Any]]:
-        """
-        يبني chunk مستقل لكل repo (بدل تجميعهم في نص واحد كبير).
-        كل chunk معاه metadata (اسم الـ repo، اللغة، النجوم، الرابط...) مفيدة
-        للـ filtering وعرض الـ source بعد الاسترجاع من vector DB.
-
-        لو وصف الـ repo طويل جدًا وتعدّى max_chars، يتم تقسيمه لأكتر من chunk
-        وكلهم بياخدوا نفس الـ metadata (مع رقم تسلسلي لو حصل تقسيم).
-        """
+       
         documents: List[Dict[str, Any]] = []
 
         for repo in repos:
@@ -629,9 +599,7 @@ class GitHubFetcher:
 
         return documents
 
-    # ------------------------------------------------------------------ #
-    # نقطة الدخول الرئيسية
-    # ------------------------------------------------------------------ #
+
     def _fetch_profile_repos_languages(
         self,
         username: str,
@@ -682,18 +650,7 @@ class GitHubFetcher:
         max_repos_for_languages: int = DEFAULT_MAX_REPOS_FOR_LANGUAGES,
         max_chars_per_chunk: int = DEFAULT_MAX_CHUNK_CHARS,
     ) -> List[Dict[str, Any]]:
-        """
-        يجمع بيانات البروفايل والـ repos واللغات ويعيدها كقائمة من dicts:
-        كل عنصر فيه {"text": ..., "metadata": {...}}.
-
-        - الـ profile chunk لوحده (metadata type="profile").
-        - كل repo بقى chunk مستقل (metadata type="repo", فيها repo_name,
-          language, stars, url...) -> دقة أعلى في الاسترجاع من دمج كل
-          الـ repos في نص واحد.
-        - الـ languages summary chunk لوحده (metadata type="languages").
-        - أي نص أطول من max_chars_per_chunk يتم تقسيمه عبر
-          RecursiveCharacterTextSplitter (أو fallback بسيط لو غير مثبت).
-        """
+       
         logger.info(f"Fetching GitHub data for @{username}...")
 
         profile, repos, lang_bytes = self._fetch_profile_repos_languages(
@@ -735,23 +692,14 @@ class GitHubFetcher:
         max_repos_for_languages: int = DEFAULT_MAX_REPOS_FOR_LANGUAGES,
         max_chars_per_chunk: int = DEFAULT_MAX_CHUNK_CHARS,
     ) -> List[str]:
-        """
-        نسخة مبسّطة (legacy-friendly) من get_profile_documents: ترجع نصوص
-        الـ chunks فقط بدون metadata. كل repo لسه chunk مستقل (أدق من
-        النسخة القديمة اللي كانت تدمج كل الـ repos في نص واحد).
-
-        لو محتاج metadata (repo_name, stars, url...) لـ filtering أو عرض
-        الـ source، استخدم get_profile_documents بدلًا من ده.
-        """
+        
         documents = self.get_profile_documents(
             username, max_repos, fetch_languages, max_repos_for_languages, max_chars_per_chunk
         )
         return [doc["text"] for doc in documents]
 
 
-# ---------------------------------------------------------------------- #
-# Convenience functions
-# ---------------------------------------------------------------------- #
+
 def load_github_profile(
     username: str,
     token: Optional[str] = None,
@@ -779,11 +727,7 @@ def load_github_profile_documents(
     fetch_languages: bool = True,
     max_repos_for_languages: int = DEFAULT_MAX_REPOS_FOR_LANGUAGES,
 ) -> List[Dict[str, Any]]:
-    """
-    نفس load_github_profile بس ترجع [{"text": ..., "metadata": {...}}, ...]
-    مناسبة للتخزين في vector DB (Chroma, FAISS...) مع إمكانية الـ filtering
-    وعرض الـ source بعد الاسترجاع.
-    """
+   
     with GitHubFetcher(token) as fetcher:
         return fetcher.get_profile_documents(
             username,

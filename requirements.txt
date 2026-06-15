@@ -7,3 +7,4 @@ tenacity
 loguru
 playwright
 langchain-text-splitters
+sentence-transformers chromadb
