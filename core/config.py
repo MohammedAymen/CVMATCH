@@ -31,4 +31,12 @@ class Settings:
     # ========== GitHub ==========
     github_token = os.getenv("GITHUB_TOKEN", None)
 
+    # ========== Notion ==========
+    notion_token = os.getenv("NOTION_TOKEN", None)
+    notion_database_id = os.getenv("NOTION_DATABASE_ID", None)
+
+    google_api_key = os.getenv("GOOGLE_API_KEY", None)
+
+    groq_api_key = os.getenv("GROQ_API_KEY", None)
+
 settings = Settings()

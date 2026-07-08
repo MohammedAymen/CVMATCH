@@ -12,3 +12,4 @@ chromadb
 tqdm
 pymupdf
 einops
+notion-client>=2.0.0

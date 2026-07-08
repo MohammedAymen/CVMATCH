@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import requests
 from requests.structures import CaseInsensitiveDict
 
-from core.config import Settings
+from core.config import settings
 from core.logger import logger
 
 try:
@@ -117,7 +117,7 @@ class GitHubFetcher:
         cache_ttl: int = DEFAULT_CACHE_TTL,
         timeout: int = DEFAULT_TIMEOUT,
     ):
-        self.token = token or getattr(Settings(), "GITHUB_TOKEN", None)
+        self.token = token or settings.github_token
         self.max_retries = max_retries
         self.timeout = timeout
         self.session = requests.Session()
