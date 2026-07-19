@@ -1,10 +1,3 @@
-# notion/dashboard.py
-# notion-client >= 2.3 (new API)
-# - databases.create  → مش بيقبل properties
-# - data_sources.update(data_source_id, properties=...) → ده الصح لإضافة columns
-# - data_sources.query(data_source_id) → للـ query
-# - pages.create(parent={"data_source_id": ...}) → للإضافة
-
 import os
 import hashlib
 import concurrent.futures
@@ -18,7 +11,7 @@ from core.config import settings
 
 class NotionDashboard:
 
-    # الـ schema — بتتضاف بـ data_sources.update بعد إنشاء الـ DB
+    
     PROPERTIES_SCHEMA = {
         "Job ID":          {"rich_text": {}},
         "Company":         {"rich_text": {}},
@@ -32,6 +25,11 @@ class NotionDashboard:
         "Strengths":       {"rich_text": {}},
         "Gaps":            {"rich_text": {}},
         "Recommendations": {"rich_text": {}},
+        "Decision":        {"select": {"options": [
+                               {"name": "Apply",              "color": "green"},
+                               {"name": "Improve then apply", "color": "yellow"},
+                               {"name": "Skip",                "color": "red"},
+                           ]}},
         "Apply URL":       {"url": {}},
         "Status":          {"select": {"options": [
                                {"name": "Pending",      "color": "gray"},
@@ -68,15 +66,13 @@ class NotionDashboard:
             self.data_source_id = self._resolve_data_source_id(self.database_id)
             self._persist_ids(self.database_id, self.data_source_id)
         else:
-            # تأكد إن الـ schema موجود، وإلا أضفه
+           
             self._ensure_schema()
 
         logger.info(f"📋 DB: {self.database_id}")
         logger.info(f"📋 DS: {self.data_source_id}")
 
-    # ──────────────────────────────────────────────
-    # Bootstrap
-    # ──────────────────────────────────────────────
+   
 
     def _resolve_data_source_id(self, database_id: str) -> Optional[str]:
         try:
@@ -91,7 +87,7 @@ class NotionDashboard:
         return None
 
     def _bootstrap_database(self) -> tuple:
-        """ينشئ database جديد ويضيف عليه الـ columns."""
+        
         parent_id = getattr(settings, "NOTION_PARENT_PAGE_ID", None) or os.getenv("NOTION_PARENT_PAGE_ID")
 
         if not parent_id:
@@ -107,7 +103,7 @@ class NotionDashboard:
             parent_id = results[0]["id"]
             logger.info(f"📌 Using page {parent_id} as parent")
 
-        # Step 1: إنشاء الـ database (بدون properties — الـ API الجديد مش بيقبلها هنا)
+        
         response = self.client.databases.create(
             parent={"page_id": parent_id},
             title=[{"type": "text", "text": {"content": "🤖 Job Matcher Dashboard"}}],
@@ -115,14 +111,14 @@ class NotionDashboard:
         db_id = response["id"]
         logger.info(f"✅ Database created: {db_id}")
 
-        # استخراج data_source_id
+        
         ds_id = None
         data_sources = response.get("data_sources", [])
         if data_sources:
             ds_id = data_sources[0]["id"]
             logger.info(f"✅ data_source_id: {ds_id}")
 
-        # Step 2: إضافة الـ columns بـ data_sources.update
+        
         if ds_id:
             self._add_schema_to_data_source(ds_id)
         else:
@@ -131,7 +127,7 @@ class NotionDashboard:
         return db_id, ds_id
 
     def _add_schema_to_data_source(self, ds_id: str) -> None:
-        """يضيف الـ columns على الـ data source."""
+       
         try:
             self.client.data_sources.update(
                 ds_id,
@@ -142,7 +138,7 @@ class NotionDashboard:
             logger.error(f"❌ Failed to apply schema: {e}")
 
     def _ensure_schema(self) -> None:
-        """يتأكد إن الـ columns موجودة، ويضيفها لو مش موجودة."""
+        
         try:
             db = self.client.databases.retrieve(database_id=self.database_id)
             existing_props = db.get("properties", {})
@@ -186,9 +182,7 @@ class NotionDashboard:
         except Exception as e:
             logger.warning(f"⚠️ Couldn't save to .env: {e}")
 
-    # ──────────────────────────────────────────────
-    # Deduplication
-    # ──────────────────────────────────────────────
+    
 
     @staticmethod
     def _job_id(job: Dict) -> str:
@@ -219,10 +213,7 @@ class NotionDashboard:
             cursor = resp["next_cursor"]
         return existing
 
-    # ──────────────────────────────────────────────
-    # Properties builder
-    # ──────────────────────────────────────────────
-
+   
     def _build_properties(self, job: Dict) -> Dict:
         status = job.get("status", "Pending")
         if status not in {"Pending", "Applied", "Interviewing", "Rejected", "Accepted"}:
@@ -231,7 +222,23 @@ class NotionDashboard:
         def rt(text: str, limit: int = 2000) -> list:
             return [{"text": {"content": str(text)[:limit]}}]
 
-        # الـ title property اسمها "Name" في الـ API الجديد (default)
+        def format_gaps(gaps: list, limit: int = 3) -> str:
+            """بيدعم الشكل الجديد (list of dicts فيها skill/severity) والقديم (list of strings)."""
+            parts = []
+            for g in gaps[:limit]:
+                if isinstance(g, dict):
+                    skill = g.get("skill", "")
+                    severity = g.get("severity", "")
+                    parts.append(f"{skill} ({severity})" if severity else skill)
+                else:
+                    parts.append(str(g))
+            return ", ".join(parts)
+
+        decision = job.get("decision", "")
+        if decision not in {"Apply", "Improve then apply", "Skip"}:
+            decision = None
+
+     
         return {
             "Name":            {"title": rt(job.get("title", "Unknown"))},
             "Job ID":          {"rich_text": rt(self._job_id(job))},
@@ -240,8 +247,9 @@ class NotionDashboard:
             "Match Score":     {"number": job.get("llm_score", 0)},
             "Confidence":      {"select": {"name": job.get("llm_confidence", "Medium")}},
             "Strengths":       {"rich_text": rt(", ".join(job.get("strengths", [])[:3]))},
-            "Gaps":            {"rich_text": rt(", ".join(job.get("gaps", [])[:3]))},
+            "Gaps":            {"rich_text": rt(format_gaps(job.get("gaps", [])))},
             "Recommendations": {"rich_text": rt(", ".join(job.get("recommendations", [])[:2]))},
+            "Decision":        {"select": {"name": decision}} if decision else {"select": None},
             "Apply URL":       {"url": job.get("apply_link") or None},
             "Status":          {"select": {"name": status}},
             "Posted Date":     {"date": {"start": job.get("posted_date", datetime.now().date().isoformat())}},
@@ -249,10 +257,7 @@ class NotionDashboard:
             "Last Updated":    {"date": {"start": datetime.now().date().isoformat()}},
         }
 
-    # ──────────────────────────────────────────────
-    # Write
-    # ──────────────────────────────────────────────
-
+   
     def _add_single_job(self, job: Dict) -> Optional[str]:
         try:
             resp = self.client.pages.create(
@@ -304,10 +309,7 @@ class NotionDashboard:
         )
         return results
 
-    # ──────────────────────────────────────────────
-    # Read / Update
-    # ──────────────────────────────────────────────
-
+    
     def update_job_status(self, page_id: str, new_status: str) -> bool:
         if new_status not in {"Pending", "Applied", "Interviewing", "Rejected", "Accepted"}:
             return False
@@ -347,10 +349,7 @@ class NotionDashboard:
             logger.error(f"❌ Failed to fetch jobs: {e}")
             return []
 
-    # ──────────────────────────────────────────────
-    # Helpers
-    # ──────────────────────────────────────────────
-
+    
     @staticmethod
     def _get_title_text(prop: Optional[Dict]) -> str:
         items = (prop or {}).get("title", [])
@@ -362,9 +361,6 @@ class NotionDashboard:
         return items[0]["text"]["content"] if items else ""
 
 
-# ──────────────────────────────────────────────────────
-# Helper function
-# ──────────────────────────────────────────────────────
 
 def push_to_notion_dashboard(
     jobs: List[Dict],

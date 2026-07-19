@@ -1,5 +1,3 @@
-# collectors/base.py
-
 import random
 import time
 from abc import ABC, abstractmethod
@@ -46,13 +44,7 @@ class BaseScraper(ABC):
         return page
 
     async def _get_isolated_page(self) -> tuple[Page, BrowserContext]:
-        """
-        بيرجع صفحة جوه context منفصل تمامًا عن self._context الرئيسي.
-        استخدمها لأي صفحة فرعية (زي صفحة تفاصيل الوظيفة) محتاجة تتقفل
-        لوحدها بعد الاستخدام، من غير ما تأثر على الصفحة الأساسية اللي
-        بتلف على نتائج البحث. الكولر مسؤول عن إغلاق الـ context الراجع
-        (مش self._context العام).
-        """
+        
         browser = await self._init_browser()
         context = await browser.new_context(
             viewport={"width": 1280, "height": 800},

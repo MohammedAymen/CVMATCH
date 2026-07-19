@@ -1,4 +1,4 @@
-# api/main.py
+
 
 import sys
 import asyncio
@@ -15,7 +15,8 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Query
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Form
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -26,13 +27,12 @@ from profile_data.cv_parser import load_cv_documents
 from profile_data.github_fetcher import load_github_profile_documents
 from profile_data.embedder import build_profile_embeddings, ProfileEmbedder
 from matching.pipeline import MatchingPipeline
+from matching.scorer import JobScorer, score_job_with_profile
 from notion.dashboard import push_to_notion_dashboard, NotionDashboard
 from collectors.wuzzuff import WuzzufScraper
+from utils.text_splitter import split_job_text
 
 
-# ============================================================
-# Pydantic Schemas
-# ============================================================
 
 class ProfileSetupResponse(BaseModel):
     status: str
@@ -48,17 +48,60 @@ class JobSearchRequest(BaseModel):
     max_jobs: int = 20
 
 
+class GapDetail(BaseModel):
+    skill: str
+    severity: str            
+    effort_estimate: str
+    learning_direction: str
+
+
+class ImprovementPlanItem(BaseModel):
+    skill: str
+    priority: str
+    estimated_effort: str
+    learning_direction: str
+
+
 class JobResponse(BaseModel):
     title: str
     company: str
     location: str
     match_score: int
     confidence: str
+    decision: str                             
+    explanation: str
     strengths: List[str]
-    gaps: List[str]
+    gaps: List[GapDetail]
+    improvement_plan: List[ImprovementPlanItem]
     recommendations: List[str]
     apply_link: Optional[str] = None
-    scored_by: Optional[str] = None    # ← أي provider استخدمناه
+    scored_by: Optional[str] = None    
+    from_cache: bool = False
+
+
+
+
+class ManualJobRequest(BaseModel):
+    job_title: Optional[str] = "Untitled Job"
+    job_text: str                              
+    job_link: Optional[str] = None
+    
+    custom_api_key: Optional[str] = None
+    custom_base_url: Optional[str] = None
+    custom_model: Optional[str] = None
+
+
+class ManualJobResponse(BaseModel):
+    match_score: int
+    confidence: str
+    decision: str
+    explanation: str
+    strengths: List[str]
+    gaps: List[GapDetail]
+    improvement_plan: List[ImprovementPlanItem]
+    recommendations: List[str]
+    scored_by: Optional[str] = None
+    from_cache: bool = False
 
 
 class SearchResponse(BaseModel):
@@ -66,12 +109,9 @@ class SearchResponse(BaseModel):
     qualified_jobs: int
     jobs: List[JobResponse]
     notion_link: Optional[str] = None
-    provider_stats: Optional[Dict] = None   # ← إحصائيات الـ providers
+    provider_stats: Optional[Dict] = None   
 
 
-# ============================================================
-# Lifespan
-# ============================================================
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -79,7 +119,7 @@ async def lifespan(app: FastAPI):
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     app.state.sessions = {}
 
-    # ─── بناء AIClient مرة واحدة للـ app بأكمله ───
+    
     app.state.ai_client = AIClient(
         groq_api_key=getattr(settings, "groq_api_key", None),
         gemini_api_key=getattr(settings, "gemini_api_key", None),
@@ -90,9 +130,7 @@ async def lifespan(app: FastAPI):
     logger.info("🛑 Shutting down Job Matcher API...")
 
 
-# ============================================================
-# FastAPI App
-# ============================================================
+
 
 app = FastAPI(
     title="Job Matcher AI API",
@@ -101,17 +139,26 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],       
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 UPLOAD_DIR = Path("data/uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
-# ============================================================
-# Helper Functions
-# ============================================================
+
 
 def build_embedder(
+    user_id: str,
     cv_path: Optional[str] = None,
     github_username: Optional[str] = None,
+    github_token: Optional[str] = None,
 ) -> ProfileEmbedder:
     cv_documents     = []
     github_documents = []
@@ -126,7 +173,7 @@ def build_embedder(
         try:
             github_documents = load_github_profile_documents(
                 username=github_username,
-                token=settings.github_token,
+                token=github_token,  
                 max_repos=20,
             )
             logger.info(f"   ✅ GitHub: {len(github_documents)} documents")
@@ -136,11 +183,13 @@ def build_embedder(
     if not cv_documents and not github_documents:
         raise HTTPException(status_code=400, detail="No profile data provided.")
 
+    
     embedder = build_profile_embeddings(
         cv_documents=cv_documents,
         github_documents=github_documents,
+        collection_name=f"profile_{user_id}",
         persist_directory=settings.chroma_persist_directory,
-        reset_collection=True,
+        reset_collection=True,  
     )
     return embedder
 
@@ -155,9 +204,7 @@ def get_user_session(user_id: str) -> Dict[str, Any]:
     return session
 
 
-# ============================================================
-# Endpoints
-# ============================================================
+
 
 @app.get("/")
 async def root():
@@ -165,7 +212,7 @@ async def root():
         "message": "Job Matcher AI API",
         "status":  "running",
         "version": "2.0.0",
-        "llm_chain": "Groq → Gemini → Qwen 2.5 (Ollama)",
+        "llm_chain": "Groq → Gemini → Qwen3 4B (Ollama)",
     }
 
 
@@ -184,6 +231,9 @@ async def setup_profile(
     cv_file: Optional[UploadFile] = File(None),
     github_username: Optional[str] = Query(None),
     notion_database_id: Optional[str] = Query(None),
+    
+    github_token: Optional[str] = Form(None),
+    notion_token: Optional[str] = Form(None),
 ):
     if not cv_file and not github_username:
         raise HTTPException(
@@ -201,18 +251,23 @@ async def setup_profile(
         logger.info(f"📄 CV saved: {cv_path}")
 
     try:
+        user_id = str(uuid.uuid4())
+
         embedder = build_embedder(
+            user_id=user_id,
             cv_path=str(cv_path) if cv_path else None,
             github_username=github_username or None,
+            github_token=github_token or None,
         )
         stats = embedder.get_collection_stats()
 
-        user_id = str(uuid.uuid4())
-
         notion_data_source_id = None
-        if not notion_database_id:
+        if not notion_token:
+            
+            logger.info("ℹ️ No Notion token provided — results will be returned via API only.")
+        elif not notion_database_id:
             try:
-                notion_dashboard    = NotionDashboard()
+                notion_dashboard    = NotionDashboard(token=notion_token)
                 notion_database_id  = notion_dashboard.database_id
                 notion_data_source_id = notion_dashboard.data_source_id
                 logger.info(f"📝 Notion DB created: {notion_database_id}")
@@ -221,7 +276,7 @@ async def setup_profile(
                 notion_database_id = None
         else:
             try:
-                notion_dashboard      = NotionDashboard(database_id=notion_database_id)
+                notion_dashboard      = NotionDashboard(token=notion_token, database_id=notion_database_id)
                 notion_data_source_id = notion_dashboard.data_source_id
             except Exception as e:
                 logger.warning(f"Failed to resolve data_source_id: {e}")
@@ -232,6 +287,7 @@ async def setup_profile(
             "embedder":             embedder,
             "cv_path":              str(cv_path) if cv_path else None,
             "github_username":      github_username,
+            "notion_token":         notion_token,         
             "notion_database_id":   notion_database_id,
             "notion_data_source_id": notion_data_source_id,
             "created_at":           datetime.now().isoformat(),
@@ -257,13 +313,14 @@ async def search_jobs(
 ):
     session  = get_user_session(user_id)
     embedder = session.get("embedder")
+    notion_token = session.get("notion_token")
     notion_db_id = session.get("notion_database_id")
     notion_ds_id = session.get("notion_data_source_id")
 
     if not embedder:
         raise HTTPException(status_code=400, detail="Embedder not found. Re-setup profile.")
 
-    # ─── Scraping ───
+    
     scraper = WuzzufScraper(headless=True)
     try:
         jobs_raw = await scraper.scrape(
@@ -290,14 +347,15 @@ async def search_jobs(
         for j in jobs_raw
     ]
 
-    # ─── Pipeline (يستخدم الـ AIClient المشترك) ───
+    
     pipeline = MatchingPipeline(
         embedder=embedder,
         similarity_threshold=0.50,
         llm_score_threshold=60.0,
         top_k_chunks=10,
-        ai_client=app.state.ai_client,   # ← مشترك على مستوى الـ app
-        max_workers=3,                    # ↑ زودنا لأن API calls أسرع من Ollama
+        ai_client=app.state.ai_client,   
+        max_workers=3,                    
+        cache_scope=user_id,              
     )
     results = pipeline.process_jobs(jobs_dict)
 
@@ -327,11 +385,12 @@ async def search_jobs(
     except Exception as e:
         logger.error(f"⚠️ Checkpoint save failed (non-fatal): {e}")
 
-    # ─── Notion upload ───
+    
     if results["stage3_final"] and notion_db_id and notion_ds_id:
         try:
             notion_result = push_to_notion_dashboard(
                 jobs=results["stage3_final"],
+                token=notion_token,
                 database_id=notion_db_id,
                 data_source_id=notion_ds_id,
                 skip_duplicates=True,
@@ -343,7 +402,7 @@ async def search_jobs(
                 f"ℹ️  Retry with: scripts/upload_checkpoint.py {checkpoint_path}"
             )
 
-    # ─── Build response ───
+    
     job_responses = [
         JobResponse(
             title=job.get("title", "Unknown"),
@@ -351,11 +410,15 @@ async def search_jobs(
             location=job.get("location", "N/A"),
             match_score=job.get("llm_score", 0),
             confidence=job.get("llm_confidence", "Medium"),
+            decision=job.get("decision", "Skip"),
+            explanation=job.get("explanation", ""),
             strengths=job.get("strengths", [])[:5],
             gaps=job.get("gaps", [])[:5],
+            improvement_plan=job.get("improvement_plan", []),
             recommendations=job.get("recommendations", [])[:3],
             apply_link=job.get("apply_link"),
             scored_by=job.get("scored_by"),
+            from_cache=job.get("from_cache", False),
         )
         for job in results["stage3_final"][:20]
     ]
@@ -372,6 +435,52 @@ async def search_jobs(
         jobs=job_responses,
         notion_link=notion_link,
         provider_stats=results.get("provider_stats"),
+    )
+
+
+@app.post("/jobs/analyze-manual", response_model=ManualJobResponse)
+async def analyze_manual_job(
+    request: ManualJobRequest,
+    user_id: str = Query(..., description="User ID from /profile/setup"),
+):
+    
+    session  = get_user_session(user_id)
+    embedder = session.get("embedder")
+    if not embedder:
+        raise HTTPException(status_code=400, detail="Embedder not found. Re-setup profile.")
+
+    
+    split = split_job_text(request.job_text)
+
+    scorer = JobScorer(ai_client=app.state.ai_client)
+
+    result = score_job_with_profile(
+        job_title=request.job_title or "Untitled Job",
+        job_description=split["description"],
+        job_requirements=split["requirements"],
+        embedder=embedder,
+        scorer=scorer,
+        top_k_chunks=10,
+        custom_api_key=request.custom_api_key,
+        custom_base_url=request.custom_base_url,
+        custom_model=request.custom_model,
+        cache_scope=user_id,
+    )
+
+    if result.get("error"):
+        raise HTTPException(status_code=422, detail=f"Could not analyze job: {result['error']}")
+
+    return ManualJobResponse(
+        match_score=result.get("score", 0),
+        confidence=result.get("confidence", "Medium"),
+        decision=result.get("decision", "Skip"),
+        explanation=result.get("explanation", ""),
+        strengths=result.get("strengths", []),
+        gaps=result.get("gaps", []),
+        improvement_plan=result.get("improvement_plan", []),
+        recommendations=result.get("recommendations", []),
+        scored_by=result.get("provider_used"),
+        from_cache=result.get("from_cache", False),
     )
 
 

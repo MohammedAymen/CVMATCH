@@ -25,15 +25,15 @@ GITHUB_GRAPHQL_API = "https://api.github.com/graphql"
 
 DEFAULT_TIMEOUT = 15
 DEFAULT_MAX_RETRIES = 3
-DEFAULT_CACHE_TTL = 3600              # ساعة واحدة
-DEFAULT_MAX_REPO_PAGES = 3            # حد أقصى 300 repo
-DEFAULT_MAX_REPOS_FOR_LANGUAGES = 10  # عدد الـ repos التي تُجلب لغاتها بالتفصيل عبر REST
-DEFAULT_MAX_CHUNK_CHARS = 1200        # حد أقصى تقريبي (~300 توكن) قبل تقسيم أي chunk
+DEFAULT_CACHE_TTL = 3600              
+DEFAULT_MAX_REPO_PAGES = 3            
+DEFAULT_MAX_REPOS_FOR_LANGUAGES = 10  
+DEFAULT_MAX_CHUNK_CHARS = 1200        
 DEFAULT_CHUNK_OVERLAP = 100
 
 
 class _SimpleCache:
-    """Cache بسيط في الذاكرة مع TTL، آمن بين الـ threads بشكل أساسي."""
+   
 
     def __init__(self, ttl: int = DEFAULT_CACHE_TTL):
         self._ttl = ttl
@@ -179,10 +179,7 @@ class GitHubFetcher:
 
 
     def _request(self, url: str, params: Optional[Dict] = None) -> Optional[Union[Dict, List]]:
-        """
-        ينفّذ GET request مع معالجة الأخطاء، rate limiting، وعدد محاولات محدود.
-        يرجع None في حالة الفشل النهائي بعد كل المحاولات.
-        """
+       
         last_error: Optional[Exception] = None
 
         for attempt in range(self.max_retries + 1):
@@ -248,7 +245,7 @@ class GitHubFetcher:
 
 
     def _graphql_request(self, query: str, variables: Dict) -> Optional[Dict]:
-        """ينفّذ طلب GraphQL. يتطلب token. يرجع None لو فشل أو لا يوجد token."""
+        
         if not self.token:
             return None
 
@@ -354,9 +351,7 @@ class GitHubFetcher:
             self._cache.set(cache_key, top_repos)
         return top_repos
 
-    # ------------------------------------------------------------------ #
-    # REST: languages (محدودة لتجنب N+1)
-    # ------------------------------------------------------------------ #
+    
     def fetch_languages_for_repo(self, repo_full_name: str) -> Dict[str, int]:
         cache_key = f"languages:{repo_full_name}"
         if self._cache:
@@ -398,10 +393,7 @@ class GitHubFetcher:
     def fetch_profile_via_graphql(
         self, username: str, max_repos: int = 30, langs_per_repo: int = 5
     ) -> Optional[Dict[str, Any]]:
-        """
-        يجلب البروفايل + الـ repos + اللغات في طلب واحد فقط عبر GraphQL.
-        يتطلب وجود token. يرجع None لو لا يوجد token أو فشل الطلب أو المستخدم غير موجود.
-        """
+        
         if not self.token:
             return None
 
@@ -535,11 +527,7 @@ class GitHubFetcher:
         max_chars: int = DEFAULT_MAX_CHUNK_CHARS,
         overlap: int = DEFAULT_CHUNK_OVERLAP,
     ) -> List[str]:
-        """
-        يرجع [text] كما هو لو كان أقصر من max_chars (الحالة الشائعة لكل repo).
-        لو أطول، يستخدم RecursiveCharacterTextSplitter لو متاح، وإلا
-        تقسيم بسيط بالطول مع overlap.
-        """
+       
         if len(text) <= max_chars:
             return [text]
 
@@ -607,17 +595,12 @@ class GitHubFetcher:
         fetch_languages: bool = True,
         max_repos_for_languages: int = DEFAULT_MAX_REPOS_FOR_LANGUAGES,
     ) -> Tuple[Dict[str, Any], List[Dict], Dict[str, int]]:
-        """
-        يجلب الـ profile + الـ repos + اللغات، مع تفضيل GraphQL (طلب واحد فقط)
-        لو متوفر token، وإلا REST مع fallback.
-
-        منطق مشترك تستخدمه get_profile_documents و get_profile_chunks.
-        """
+        
         profile: Dict[str, Any] = {}
         repos: List[Dict] = []
         lang_bytes: Dict[str, int] = {}
 
-        # المسار الأول: GraphQL (سريع واقتصادي، يتطلب token)
+        
         if self.token:
             graphql_data = self.fetch_profile_via_graphql(username, max_repos)
             if graphql_data and graphql_data.get("user"):
@@ -629,7 +612,7 @@ class GitHubFetcher:
                 if fetch_languages:
                     lang_bytes = self._aggregate_languages_from_graphql_repos(repos)
 
-        # المسار الثاني: REST API (fallback لو لا يوجد token أو فشل GraphQL)
+        
         if not profile:
             profile = self.fetch_user_profile(username)
             if not profile:
@@ -707,10 +690,7 @@ def load_github_profile(
     fetch_languages: bool = True,
     max_repos_for_languages: int = DEFAULT_MAX_REPOS_FOR_LANGUAGES,
 ) -> List[str]:
-    """
-    واجهة بسيطة لجلب ملف GitHub كامل وتقطيعه إلى نصوص (chunks) جاهزة للـ embedding.
-    كل repo بقى chunk مستقل، بدون metadata.
-    """
+    
     with GitHubFetcher(token) as fetcher:
         return fetcher.get_profile_chunks(
             username,

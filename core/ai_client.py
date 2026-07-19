@@ -1,4 +1,3 @@
-
 import os
 import json
 import time
@@ -12,25 +11,22 @@ import time as _time
 from core.logger import logger
 
 
-# ─────────────────────────────────────────────
-# Provider Enum
-# ─────────────────────────────────────────────
+
 
 class LLMProvider(str, Enum):
+    CUSTOM = "custom"   
     GROQ   = "groq"
     GEMINI = "gemini"
     QWEN   = "qwen"
 
 
-# ─────────────────────────────────────────────
-# Provider State (quota tracking)
-# ─────────────────────────────────────────────
+
 
 @dataclass
 class ProviderState:
-    """تتبع حالة كل provider (quota / errors)."""
+    
     name: LLMProvider
-    disabled_until: float = 0.0          # timestamp — متاح تاني بعد الوقت ده
+    disabled_until: float = 0.0         
     consecutive_failures: int = 0
     total_calls: int = 0
     total_failures: int = 0
@@ -58,49 +54,34 @@ class ProviderState:
         logger.warning(f"🚫 {self.name} quota exhausted — disabled for 1 hour")
 
 
-# ─────────────────────────────────────────────
-# Main AIClient
-# ─────────────────────────────────────────────
 
 class AIClient:
-    """
-    Unified LLM client with automatic provider fallback.
-
-    الاستخدام:
-        client = AIClient()
-        response = client.complete(prompt="...")
-        print(response.text)
-        print(response.provider_used)
-    """
-
-    # الترتيب الافتراضي للـ providers
+    
     PROVIDER_ORDER = [LLMProvider.GROQ, LLMProvider.GEMINI, LLMProvider.QWEN]
 
-    # ─── Groq models (بالترتيب التفضيلي) ───
+    
     GROQ_MODELS = [
-        "llama-3.3-70b-versatile",      # الأفضل للـ reasoning
-        "llama-3.1-70b-versatile",      # fallback
-        "mixtral-8x7b-32768",           # fallback سريع
-    ]
+        "llama-3.3-70b-versatile",      
+        "llama-3.1-70b-versatile",      
+        "mixtral-8x7b-32768",               ]
 
-    # ─── Gemini models (بالترتيب — بناءً على اختبار فعلي) ───
+    
     GEMINI_MODELS = [
-        "gemini-3.5-flash",      # ✅ أفضل أداء + JSON صح
-        "gemini-2.5-flash-lite", # ✅ fallback سريع مع mime
-        "gemini-2.5-flash",      # fallback
-        "gemini-2.0-flash",      # fallback قديم
+        "gemini-3.5-flash",      
+        "gemini-2.5-flash-lite", 
+        "gemini-2.5-flash",      
+        "gemini-2.0-flash",      
     ]
 
-    # ─── Qwen via Ollama ───
-    # قم بتغيير حسب اللي عندك: qwen2.5:14b أو qwen2.5:7b
-    QWEN_MODEL = "qwen2.5:14b"
+   
+    QWEN_MODEL = "qwen3:4b-q4_K_M"
 
     def __init__(
         self,
         groq_api_key: Optional[str] = None,
         gemini_api_key: Optional[str] = None,
         ollama_url: str = "http://localhost:11434",
-        ollama_timeout: int = 600,           # Qwen local → وقت أطول
+        ollama_timeout: int = 600,           
         max_retries_per_provider: int = 2,
     ):
         self.groq_api_key   = groq_api_key   or os.getenv("GROQ_API_KEY", "")
@@ -109,42 +90,57 @@ class AIClient:
         self.ollama_timeout = ollama_timeout
         self.max_retries    = max_retries_per_provider
 
-        # State لكل provider
+       
         self._states: dict[LLMProvider, ProviderState] = {
             p: ProviderState(name=p) for p in LLMProvider
         }
 
-        # اكتشاف الـ Qwen model المتاح على الجهاز تلقائياً
+        
         self.QWEN_MODEL = self._detect_qwen_model()
 
         self._log_startup()
 
-    # ─────────────────────────────────────────
-    # Public API
-    # ─────────────────────────────────────────
-
+   
     def complete(
         self,
         prompt: str,
         system_prompt: str = "",
         temperature: float = 0.2,
         max_tokens: int = 1500,
+        
+        custom_api_key: Optional[str] = None,
+        custom_base_url: Optional[str] = None,
+        custom_model: Optional[str] = None,
     ) -> "LLMResponse":
-        """
-        بيبعت الـ prompt للـ providers بالترتيب ولما واحد يفشل يروح للتاني.
-        بيرجع LLMResponse فيه الـ text والـ provider اللي اشتغل.
-        """
-        last_error = None
+       
+        if custom_api_key and custom_base_url:
+            try:
+                logger.info("🔑 Trying user-supplied custom provider first...")
+                text = self._call_custom(
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    api_key=custom_api_key,
+                    base_url=custom_base_url,
+                    model=custom_model or "gpt-4o-mini",
+                )
+                if text:
+                    logger.info(f"✅ [custom] responded ({len(text)} chars)")
+                    return LLMResponse(text=text, provider_used=LLMProvider.CUSTOM)
+            except Exception as e:
+                
+                logger.warning(f"⚠️ Custom provider failed, falling back to default chain: {e}")
 
         for provider in self.PROVIDER_ORDER:
             state = self._states[provider]
 
-            # ── Skip: مش configured (API key فاضي أو model مش موجود) ──
+           
             if not self._is_configured(provider):
                 logger.debug(f"⏭️ Skipping {provider} (not configured)")
                 continue
 
-            # ── Skip: في cooldown بسبب errors سابقة ──
+           
             if not state.is_available():
                 secs_left = max(0, state.disabled_until - time.time())
                 logger.debug(f"⏭️ Skipping {provider} (cooldown {secs_left:.0f}s remaining)")
@@ -152,7 +148,7 @@ class AIClient:
 
             logger.info(f"🔄 Trying {provider}...")
 
-            # ── Retry loop لهذا الـ provider ──
+            
             for attempt in range(self.max_retries + 1):
                 try:
                     text = self._call_provider(
@@ -170,13 +166,12 @@ class AIClient:
                     raise ValueError("Empty response from provider")
 
                 except QuotaExhaustedError:
-                    # quota خلصت → عطله ساعة وروح للتاني فوراً
+                    
                     state.mark_quota_exhausted()
                     break
 
                 except ProviderNotConfiguredError:
-                    # مش المفروض نوصل هنا لأن _is_configured بيمنع ده
-                    # بس للأمان نـ break بدون retry
+                   
                     logger.debug(f"⏭️ {provider} not configured (caught in retry loop)")
                     break
 
@@ -196,7 +191,7 @@ class AIClient:
                         )
                         time.sleep(wait)
 
-        # كل الـ providers المتاحة فشلوا أو مش configured
+        
         configured = [p for p in self.PROVIDER_ORDER if self._is_configured(p)]
         if not configured:
             raise AllProvidersFailedError(
@@ -224,12 +219,9 @@ class AIClient:
         self._states[provider] = ProviderState(name=provider)
         logger.info(f"🔄 {provider} state reset")
 
-    # ─────────────────────────────────────────
-    # Configuration Helpers
-    # ─────────────────────────────────────────
 
     def _is_configured(self, provider: LLMProvider) -> bool:
-        """هل الـ provider ده جاهز للاستخدام؟"""
+       
         if provider == LLMProvider.GROQ:
             return bool(self.groq_api_key)
         elif provider == LLMProvider.GEMINI:
@@ -239,38 +231,43 @@ class AIClient:
         return False
 
     def _detect_qwen_model(self) -> Optional[str]:
-        """
-        بيبص على الـ models الموجودة في Ollama ويختار أحسن Qwen.
-        بيرجع None لو Ollama مش شغال أو مفيش Qwen model.
-        """
+       
+        forced_model = os.getenv("OLLAMA_MODEL", "").strip()
+        if forced_model:
+            logger.info(f"🦙 Qwen model forced via OLLAMA_MODEL env: {forced_model}")
+            return forced_model
+
+        
         preferred = [
-            "qwen2.5:14b",
-            "qwen2.5:7b",
-            "qwen2.5:3b",
+            "qwen3:4b-q4_K_M",
+            "qwen3:4b",
             "qwen2.5:1.5b",
+            "qwen2.5:3b",
             "qwen2.5",
+            "qwen2.5:7b",
             "qwen2:7b",
             "qwen2",
+            "qwen2.5:14b",
         ]
         try:
             resp = requests.get(f"{self.ollama_url}/api/tags", timeout=5)
             resp.raise_for_status()
             available = [m["name"] for m in resp.json().get("models", [])]
 
-            # exact match بالترتيب المفضل
+            
             for model in preferred:
                 if model in available:
                     logger.info(f"🦙 Qwen model auto-detected: {model}")
                     return model
 
-            # أي model اسمه فيه "qwen"
+            
             qwen_models = [m for m in available if "qwen" in m.lower()]
             if qwen_models:
                 chosen = qwen_models[0]
                 logger.info(f"🦙 Qwen model found: {chosen}")
                 return chosen
 
-            # اعرض اللي موجود فعلاً علشان يعرف يختار
+            
             logger.warning(
                 f"⚠️ No Qwen model in Ollama. Available: {available or 'none'}. "
                 f"Install: ollama pull qwen2.5:7b"
@@ -284,9 +281,7 @@ class AIClient:
             logger.warning(f"⚠️ Could not check Ollama models: {e}")
             return None
 
-    # ─────────────────────────────────────────
-    # Provider Implementations
-    # ─────────────────────────────────────────
+    
 
     def _call_provider(
         self,
@@ -305,7 +300,7 @@ class AIClient:
         else:
             raise ValueError(f"Unknown provider: {provider}")
 
-    # ── Groq ──────────────────────────────────
+    
 
     def _call_groq(self, prompt: str, system_prompt: str, temperature: float, max_tokens: int) -> str:
         if not self.groq_api_key:
@@ -316,7 +311,7 @@ class AIClient:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
-        # جرب الـ models بالترتيب لو الأول مش موجود
+        
         last_err = None
         for model in self.GROQ_MODELS:
             try:
@@ -335,26 +330,24 @@ class AIClient:
                     timeout=60,
                 )
 
-                # Quota / Rate limit
+                
                 if resp.status_code == 429:
                     error_body = resp.json().get("error", {})
                     msg = error_body.get("message", "rate limit")
                     logger.warning(f"Groq 429: {msg}")
 
-                    # استخرج الوقت الفعلي من الـ error message لو موجود
-                    # "Please try again in 6.285s"
                     
                     wait_match = _re.search(r"try again in ([\d.]+)s", msg)
                     if wait_match:
                         wait_secs = float(wait_match.group(1)) + 1.0
-                        # لو الانتظار قصير (< 30s) → sleep وحاول تاني
+                        
                         if wait_secs < 30:
                             logger.info(f"⏳ Groq TPM limit — waiting {wait_secs:.1f}s then retrying...")
                             
                             _time.sleep(wait_secs)
-                            # retry نفس الـ model
+                           
                             continue
-                    # لو مش rate limit قصير → quota فعلية
+                    
                     raise QuotaExhaustedError("Groq rate limit / quota exhausted")
 
                 resp.raise_for_status()
@@ -362,7 +355,7 @@ class AIClient:
                 return data["choices"][0]["message"]["content"].strip()
 
             except QuotaExhaustedError:
-                raise  # ارفع للـ caller مباشرة
+                raise  
             except Exception as e:
                 last_err = e
                 logger.debug(f"Groq model {model} failed: {e}")
@@ -370,7 +363,50 @@ class AIClient:
 
         raise last_err or RuntimeError("All Groq models failed")
 
-    # ── Gemini ────────────────────────────────
+   
+
+    def _call_custom(
+        self,
+        prompt: str,
+        system_prompt: str,
+        temperature: float,
+        max_tokens: int,
+        api_key: str,
+        base_url: str,
+        model: str,
+    ) -> str:
+        
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        url = base_url.rstrip("/") + "/chat/completions"
+        resp = requests.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            },
+            timeout=60,
+        )
+
+        if resp.status_code == 401:
+            raise ProviderNotConfiguredError("Invalid custom API key")
+        if resp.status_code == 429:
+            raise QuotaExhaustedError("Custom provider rate limit / quota exhausted")
+
+        resp.raise_for_status()
+        data = resp.json()
+        return data["choices"][0]["message"]["content"].strip()
+
+    
 
     def _call_gemini(self, prompt: str, system_prompt: str, temperature: float, max_tokens: int) -> str:
         if not self.gemini_api_key:
@@ -391,22 +427,20 @@ class AIClient:
                         "temperature": temperature,
                         "maxOutputTokens": max_tokens,
                         "topP": 0.9,
-                        # مش بنستخدم responseMimeType — بيسبب تقطيع في بعض models
-                        # الـ prompt نفسه بيطلب JSON بشكل صريح
+                        
                     },
                 }
                 resp = requests.post(url, json=payload, timeout=60)
 
-                # Quota exhausted فقط — مش كل error
                 if resp.status_code == 429:
                     raise QuotaExhaustedError(f"Gemini quota exhausted (429)")
 
-                # model مش موجود → جرب التاني
+                
                 if resp.status_code == 404:
                     logger.debug(f"Gemini model {model} not found (404), trying next...")
                     continue
 
-                # باقي الـ errors → exception عادي يعمل retry
+                
                 resp.raise_for_status()
                 data = resp.json()
 
@@ -416,11 +450,10 @@ class AIClient:
 
                 parts = candidates[0].get("content", {}).get("parts", [])
 
-                # thoughtSignature هو metadata على الـ part مش part منفصل —
-                # النص الفعلي موجود في text بغض النظر عن وجود thoughtSignature
+                
                 text = "".join(p.get("text", "") for p in parts).strip()
 
-                # إزالة ```json ``` لو موجودة (gemini-2.5-flash-lite بدون mime)
+                
                 if text.startswith("```"):
                     text = text.split("```", 2)[-1] if text.count("```") >= 2 else text
                     text = text.lstrip("json").strip()
@@ -441,16 +474,10 @@ class AIClient:
 
         raise last_err or RuntimeError("All Gemini models failed")
 
-    # ── Qwen via Ollama ───────────────────────
+   
 
     def _call_qwen(self, prompt: str, system_prompt: str, temperature: float, max_tokens: int) -> str:
-        """
-        Qwen 2.5 عبر Ollama مع إعدادات محسّنة للـ reasoning:
-        - temperature منخفضة للدقة
-        - top_k محدود لتقليل التشتت
-        - repeat_penalty لتجنب التكرار
-        - num_ctx كبير لاستيعاب الـ context
-        """
+        
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
@@ -466,9 +493,9 @@ class AIClient:
                 "top_k": 40,
                 "repeat_penalty": 1.1,
                 "num_predict": max_tokens,
-                "num_ctx": 8192,         # context window
-                "num_thread": 4,         # CPU threads (عدّل حسب جهازك)
-                "seed": 42,              # reproducibility
+                "num_ctx": 8192,         
+                "num_thread": 4,         
+                "seed": 42,             
             },
         }
 
@@ -487,9 +514,7 @@ class AIClient:
         except requests.exceptions.Timeout:
             raise RuntimeError(f"Ollama timeout after {self.ollama_timeout}s")
 
-    # ─────────────────────────────────────────
-    # Helpers
-    # ─────────────────────────────────────────
+   
 
     def _log_startup(self):
         parts = []
@@ -518,9 +543,6 @@ class AIClient:
         logger.info(f"   Active chain: {chain}")
 
 
-# ─────────────────────────────────────────────
-# Response dataclass
-# ─────────────────────────────────────────────
 
 @dataclass
 class LLMResponse:
@@ -531,9 +553,7 @@ class LLMResponse:
         return bool(self.text)
 
 
-# ─────────────────────────────────────────────
-# Custom Exceptions
-# ─────────────────────────────────────────────
+
 
 class QuotaExhaustedError(Exception):
     """الـ quota خلصت لهذا الـ provider — روح للتاني."""

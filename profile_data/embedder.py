@@ -115,11 +115,7 @@ class ProfileEmbedder:
 
     @staticmethod
     def _make_id(text: str, metadata: Dict[str, MetadataValue]) -> str:
-        """
-        ID ثابت مبني على hash (النص + metadata) -> نفس الـ chunk دايمًا
-        يولّد نفس الـ ID، وده يخلي upsert idempotent (إعادة تشغيل البناء
-        مرات متعددة لا ينتج تكرار ولا أخطاء).
-        """
+       
         basis = repr(sorted(metadata.items())) + "|" + text
         return hashlib.sha256(basis.encode("utf-8")).hexdigest()[:24]
 
@@ -156,10 +152,10 @@ class ProfileEmbedder:
         logger.info(f"Embedding {len(chunks)} chunks (model={self.model_name})...")
         embeddings = self._encode(prefixed_texts, batch_size, show_progress)
 
-        # upsert بدل add: لو الـ ID موجود من قبل يتم تحديثه بدل رمي خطأ
+        
         self.collection.upsert(
             embeddings=embeddings,
-            documents=chunks,  # النص الأصلي بدون الـ prefix
+            documents=chunks,  
             ids=ids,
             metadatas=clean_metadatas,
         )
@@ -215,7 +211,7 @@ class ProfileEmbedder:
         prefixed_query = self.query_prefix + query if self.query_prefix else query
         query_embedding = self._encode([prefixed_query], batch_size=1, show_progress=False)
 
-        # ChromaDB يرفض where={} (dict فاضي) - لازم None أو فيها شرط واحد على الأقل
+        
         where = filter_metadata if filter_metadata else None
 
         results = self.collection.query(

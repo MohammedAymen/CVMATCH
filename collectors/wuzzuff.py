@@ -1,5 +1,3 @@
-# collectors/wuzzuff.py
-
 import re
 from typing import List, Optional
 from urllib.parse import urljoin
@@ -47,7 +45,7 @@ class WuzzufScraper(BaseScraper):
             if not job_cards:
                 break
 
-            # نجمع الـ links الأساسية من كروت نتائج البحث
+           
             basic_list = []
             for card in job_cards:
                 if len(all_jobs) + len(basic_list) >= max_jobs:
@@ -59,8 +57,7 @@ class WuzzufScraper(BaseScraper):
                 except Exception as e:
                     logger.warning(f"Error parsing card: {e}")
 
-            # نجيب تفاصيل كل وظيفة بـ Playwright في نفس الـ context
-            # (مش context منعزل) عشان نستفيد من الـ session cookies
+           
             for basic in basic_list:
                 if len(all_jobs) >= max_jobs:
                     break
@@ -103,7 +100,7 @@ class WuzzufScraper(BaseScraper):
         return all_jobs
 
     async def _parse_card_basic(self, card) -> Optional[dict]:
-        """يجيب البيانات الأساسية من كارت نتائج البحث."""
+       
         try:
             title_elem = await card.query_selector("h2 a")
             title = (await title_elem.inner_text()).strip() if title_elem else ""
@@ -141,11 +138,7 @@ class WuzzufScraper(BaseScraper):
             return None
 
     async def _fetch_details_playwright(self, main_page: Page, job_url: str) -> tuple:
-        """
-        يجيب تفاصيل الوظيفة بـ Playwright في نفس الـ browser context.
-        بيفتح tab جديد → يجيب الداتا → يقفله.
-        أسرع من إنشاء context جديد وبيستخدم نفس الـ session.
-        """
+       
         description = ""
         requirements = ""
 
@@ -165,9 +158,9 @@ class WuzzufScraper(BaseScraper):
                     timeout=8000,
                 )
             except Exception:
-                pass  # لو مجاش، هنجرب نستخرج من النص العادي
+                pass  
 
-            # اضغط "Read more" لو موجود
+           
             for selector in ["button:has-text('Read more')", "button:has-text('Show more')"]:
                 try:
                     btn = detail_page.locator(selector)

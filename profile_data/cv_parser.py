@@ -1,6 +1,6 @@
 import fitz
 from pathlib import Path
-from langchain.schema import Document
+from langchain_core.documents import Document
 from core.logger import logger
 #from core.config import Settings
 from typing import List

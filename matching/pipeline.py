@@ -1,5 +1,3 @@
-# matching/pipeline.py
-
 import concurrent.futures
 #import threading
 import time
@@ -11,15 +9,7 @@ from matching.scorer import JobScorer, score_job_with_profile
 
 
 class MatchingPipeline:
-    """
-    Pipeline المطابقة:
-      Stage 1 — Embedding similarity filter  (≥ threshold)
-      Stage 2 — LLM scoring                  (Groq → Gemini → Qwen fallback)
-      Stage 3 — LLM score filter             (≥ llm_score_threshold)
-
-    الـ AIClient بيتعمل مرة واحدة وبيتشارك بين كل الـ threads —
-    هو thread-safe لأن كل request مستقل (requests library).
-    """
+  
 
     def __init__(
         self,
@@ -27,17 +17,18 @@ class MatchingPipeline:
         similarity_threshold: float = 0.50,
         llm_score_threshold: float = 60.0,
         top_k_chunks: int = 10,
-        # ─── AIClient params ───
+       
         ai_client: Optional[AIClient] = None,
         groq_api_key: Optional[str] = None,
         gemini_api_key: Optional[str] = None,
         ollama_url: str = "http://localhost:11434",
-        # ─── Legacy param (متاح للتوافق) ───
+        
         llm_model: Optional[str] = None,
-        # ─── Execution params ───
-        max_workers: int = 3,       # ممكن نزيد دلوقتي لأن الـ API calls سريعة
+        max_workers: int = 3,       
         max_retries: int = 2,
         retry_delay: float = 2.0,
+        
+        cache_scope: Optional[str] = None,
     ):
         self.embedder              = embedder
         self.similarity_threshold  = similarity_threshold
@@ -46,6 +37,7 @@ class MatchingPipeline:
         self.max_workers           = max_workers
         self.max_retries           = max_retries
         self.retry_delay           = retry_delay
+        self.cache_scope           = cache_scope
 
         if llm_model:
             logger.info(
@@ -53,38 +45,28 @@ class MatchingPipeline:
                 f"using AIClient (Groq → Gemini → Qwen)"
             )
 
-        # ─── AIClient مشترك بين كل الـ threads ───
+       
         self._ai_client = ai_client or AIClient(
             groq_api_key=groq_api_key,
             gemini_api_key=gemini_api_key,
             ollama_url=ollama_url,
         )
 
-        # ─── JobScorer واحد بيستخدم نفس الـ client ───
-        # الـ scorer نفسه stateless فـ thread-safe
         self._scorer = JobScorer(ai_client=self._ai_client)
 
-    # ─────────────────────────────────────────
-    # Embedding Stage
-    # ─────────────────────────────────────────
+  
 
     def _get_embedding_score(self, job_text: str) -> float:
-        """حساب درجة التشابه — آمن في threads متعددة."""
+        
         similar = self.embedder.retrieve_similar_chunks(job_text, top_k=3)
         if not similar:
             return 0.0
         return sum(c.get("similarity_score", 0) for c in similar) / len(similar)
 
-    # ─────────────────────────────────────────
-    # LLM Stage (with retry)
-    # ─────────────────────────────────────────
+   
 
     def _call_llm_with_retry(self, job: Dict) -> Dict:
-        """
-        استدعاء الـ LLM مع retry.
-        الـ AIClient بيتولى الـ fallback تلقائياً،
-        هنا بس بنتعامل مع الـ exceptions الكلية.
-        """
+       
         last_error = None
 
         for attempt in range(self.max_retries + 1):
@@ -96,6 +78,7 @@ class MatchingPipeline:
                     embedder=self.embedder,
                     scorer=self._scorer,
                     top_k_chunks=self.top_k_chunks,
+                    cache_scope=self.cache_scope,
                 )
                 return {"success": True, "score_result": score_result}
 
@@ -119,17 +102,15 @@ class MatchingPipeline:
             "error": str(last_error) if last_error else "Unknown error",
         }
 
-    # ─────────────────────────────────────────
-    # Single Job Processing
-    # ─────────────────────────────────────────
+   
 
     def _process_single_job(self, job: Dict) -> Dict:
-        """معالجة وظيفة واحدة (Stage 1 + Stage 2)."""
+        
         job_text   = f"{job.get('description', '')}\n{job.get('requirements', '')}"
         embed_score = self._get_embedding_score(job_text)
         job["embedding_score"] = embed_score
 
-        # Stage 1: Embedding filter
+        
         if embed_score < self.similarity_threshold:
             return {
                 "job": job,
@@ -141,7 +122,7 @@ class MatchingPipeline:
                 ),
             }
 
-        # Stage 2: LLM scoring
+      
         llm_result = self._call_llm_with_retry(job)
 
         if not llm_result["success"]:
@@ -155,13 +136,17 @@ class MatchingPipeline:
 
         score_result = llm_result["score_result"]
         job.update({
-            "llm_score":      score_result.get("score", 0),
-            "llm_confidence": score_result.get("confidence", "Medium"),
-            "strengths":      score_result.get("strengths", []),
-            "gaps":           score_result.get("gaps", []),
-            "recommendations": score_result.get("recommendations", []),
-            "avg_similarity": score_result.get("avg_similarity", 0),
-            "scored_by":      score_result.get("provider_used", "unknown"),  # للتتبع
+            "llm_score":        score_result.get("score", 0),
+            "llm_confidence":   score_result.get("confidence", "Medium"),
+            "decision":         score_result.get("decision", "Skip"),
+            "explanation":      score_result.get("explanation", ""),
+            "strengths":        score_result.get("strengths", []),
+            "gaps":             score_result.get("gaps", []),
+            "improvement_plan": score_result.get("improvement_plan", []),
+            "recommendations":  score_result.get("recommendations", []),
+            "avg_similarity":   score_result.get("avg_similarity", 0),
+            "scored_by":        score_result.get("provider_used", "unknown"),  # للتتبع
+            "from_cache":       score_result.get("from_cache", False),
         })
 
         return {
@@ -171,10 +156,7 @@ class MatchingPipeline:
             "score": job["llm_score"],
         }
 
-    # ─────────────────────────────────────────
-    # Main Pipeline
-    # ─────────────────────────────────────────
-
+    
     def process_jobs(self, jobs: List[Dict]) -> Dict[str, Any]:
         """
         تشغيل الـ pipeline الكامل على قائمة الوظائف.
@@ -194,7 +176,7 @@ class MatchingPipeline:
             f"(max_workers={self.max_workers})"
         )
 
-        # ─── Stage 1 + 2: Parallel processing ───
+       
         results_parallel = []
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
@@ -227,7 +209,7 @@ class MatchingPipeline:
                 if completed % 10 == 0 or completed == total:
                     logger.info(f"📈 Progress: {completed}/{total} jobs processed")
 
-        # ─── Classify results ───
+      
         stage1_passed = []
         stage2_scored = []
         filtered_out  = []
@@ -249,7 +231,7 @@ class MatchingPipeline:
                     "reason": result.get("reason", "No specific reason provided"),
                 })
 
-        # ─── Stage 3: LLM score filter ───
+        
         stage3_final = []
         for job in stage2_scored:
             score = job.get("llm_score", 0)
@@ -263,7 +245,7 @@ class MatchingPipeline:
                     "reason": f"LLM score {score}% < {self.llm_score_threshold}%",
                 })
 
-        # ─── Provider usage stats ───
+       
         provider_stats = self._ai_client.get_stats()
 
         results = {
@@ -275,7 +257,7 @@ class MatchingPipeline:
             "provider_stats": provider_stats,
         }
 
-        # ─── Summary log ───
+        
         logger.info("=" * 55)
         logger.info("📊 Pipeline Summary:")
         logger.info(f"   Total jobs       : {len(jobs)}")
