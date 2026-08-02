@@ -99,11 +99,11 @@ Always respond with valid JSON only — no markdown, no preamble, no extra text.
   "confidence": "Medium",
   "decision": "Improve then apply",
   "explanation": "Strong Python/backend match, but the missing Docker experience is a real gap for this role — learnable in about a week.",
-  "experience_gap": {
+  "experience_gap": {{
     "required_years": 5,
     "candidate_years": 1,
     "impact": "high"
-  },
+  }},
   "strengths": [
     "Strong Python experience with FastAPI (3+ projects on GitHub)",
     "Relevant experience with async programming"
@@ -141,6 +141,10 @@ Rules:
 - experience_gap.required_years and experience_gap.candidate_years must be integers (use 0 if the
   job posting doesn't state a required number of years, or if candidate experience can't be
   determined from the profile)
+- IMPORTANT: required_years must come ONLY from an explicit number stated in the job text (e.g.
+  "5+ years", "3-5 years experience"). If the job text has no explicit number — even if the title
+  says "Senior"/"Lead"/"Junior" — required_years MUST be 0 and experience_gap.impact MUST be "none".
+  Do not infer a year count from a seniority label, job title, or general tone of the posting.
 - experience_gap.impact must be exactly "none", "low", "medium", or "high", based on how large the
   gap is relative to what's required (e.g. required=5, candidate=1 → "high"; required=3, candidate=2
   → "low"/"medium"; required not stated → "none")
@@ -166,6 +170,14 @@ Rules:
             parsed["chunks_used"]   = len(relevant_chunks)
             parsed["provider_used"] = response.provider_used.value  # للتتبع
             parsed["improvement_plan"] = self._build_improvement_plan(parsed.get("gaps", []))
+
+            # سيفتي نت كودي: لو نص الوظيفة معندوش رقم سنين صريح، منسمحش لـ required_years/impact
+            # إنهم يكونوا حاجة تانية غير "0"/"none" — حتى لو الموديل استنتج رقم من العنوان (Senior/Junior).
+            if not self._job_text_has_explicit_years(job_text):
+                eg = parsed.get("experience_gap") or {}
+                eg["required_years"] = 0
+                eg["impact"] = "none"
+                parsed["experience_gap"] = eg
 
             avg_sim = 0.0
             if relevant_chunks:
@@ -206,6 +218,14 @@ Rules:
         "per", "etc", "all", "any", "who", "what", "when", "where", "how",
         "job", "role", "work", "team", "years", "year", "experience",
     }
+
+    _EXPLICIT_YEARS_RE = re.compile(r"\d+\s*(?:\+|-|to)?\s*\d*\s*\+?\s*years?", re.IGNORECASE)
+
+    @classmethod
+    def _job_text_has_explicit_years(cls, job_text: str) -> bool:
+        """بيتأكد إن نص الوظيفة فيه رقم سنين مكتوب صراحة (زي '5+ years') —
+        مستخدم كـ safety net كودي عشان الموديل ميخمّنش سنين من العنوان (Senior/Junior)."""
+        return bool(cls._EXPLICIT_YEARS_RE.search(job_text or ""))
 
     @classmethod
     def _extract_keywords(cls, text: str) -> set:
@@ -348,7 +368,8 @@ Rules:
             elif data["decision"] == "Apply" and (data["score"] < 40 or has_critical):
                 data["_flagged_for_review"] = True
 
-       
+        # سيفتي نت: لو الموديل قال "Apply" رغم إن experience_gap.impact = "high"،
+        # ننزّل القرار — الـ rubric بيقول ده ممنوع، بس بنتأكد كوديًا لو الموديل اتجاهل التعليمة.
         if high_exp_gap and data["decision"] == "Apply":
             data["decision"] = "Improve then apply"
             data["_decision_downgraded_experience_gap"] = True
