@@ -86,6 +86,7 @@ class JobResponse(BaseModel):
     improvement_plan: List[ImprovementPlanItem]
     recommendations: List[str]
     apply_link: Optional[str] = None
+    notion_page_url: Optional[str] = None
     scored_by: Optional[str] = None    
     from_cache: bool = False
     experience_gap: ExperienceGap = ExperienceGap()
@@ -113,6 +114,7 @@ class ManualJobResponse(BaseModel):
     gaps: List[GapDetail]
     improvement_plan: List[ImprovementPlanItem]
     recommendations: List[str]
+    apply_link: Optional[str] = None
     scored_by: Optional[str] = None
     from_cache: bool = False
     experience_gap: ExperienceGap = ExperienceGap()
@@ -432,6 +434,7 @@ async def search_jobs(
             improvement_plan=job.get("improvement_plan", []),
             recommendations=job.get("recommendations", [])[:3],
             apply_link=job.get("apply_link"),
+            notion_page_url=job.get("notion_page_url"),
             scored_by=job.get("scored_by"),
             from_cache=job.get("from_cache", False),
             experience_gap=job.get("experience_gap") or {},
@@ -496,6 +499,7 @@ async def analyze_manual_job(
         gaps=result.get("gaps", []),
         improvement_plan=result.get("improvement_plan", []),
         recommendations=result.get("recommendations", []),
+        apply_link=request.job_link,
         scored_by=result.get("provider_used"),
         from_cache=result.get("from_cache", False),
         experience_gap=result.get("experience_gap") or {},

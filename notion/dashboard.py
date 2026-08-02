@@ -258,13 +258,13 @@ class NotionDashboard:
         }
 
    
-    def _add_single_job(self, job: Dict) -> Optional[str]:
+    def _add_single_job(self, job: Dict) -> Optional[Dict]:
         try:
             resp = self.client.pages.create(
                 parent={"data_source_id": self.data_source_id},
                 properties=self._build_properties(job),
             )
-            return resp["id"]
+            return resp
         except APIResponseError as e:
             logger.error(f"❌ Failed to add '{job.get('title')}': {e}")
             return None
@@ -295,9 +295,15 @@ class NotionDashboard:
         results = {"added": 0, "skipped": skipped, "failed": 0}
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+         
             futures = {executor.submit(self._add_single_job, job): job for job in to_add}
             for future in concurrent.futures.as_completed(futures):
-                if future.result():
+                job  = futures[future]
+                resp = future.result()
+                if resp:
+                    
+                    job["notion_page_id"]  = resp.get("id")
+                    job["notion_page_url"] = resp.get("url")
                     results["added"] += 1
                 else:
                     results["failed"] += 1
