@@ -84,13 +84,15 @@ class WuzzufScraper(BaseScraper):
                     )
 
             if len(all_jobs) < max_jobs:
-                next_button = await page.query_selector("a[aria-label='Next']")
-                if next_button and "disabled" not in (await next_button.get_attribute("class") or ""):
-                    await next_button.click()
-                    await page.wait_for_load_state("networkidle")
-                    self._human_delay(extra=2)
+                advanced = await self._go_to_next_page(page, page_num, search_url)
+                if advanced:
                     page_num += 1
+                    self._human_delay(extra=2)
                 else:
+                    logger.info(
+                        f"[{self.source_name}] No more pages after page {page_num} "
+                        f"— stopping with {len(all_jobs)}/{max_jobs} job(s)."
+                    )
                     break
             else:
                 break
@@ -98,6 +100,61 @@ class WuzzufScraper(BaseScraper):
         await page.context.close()
         logger.info(f"[{self.source_name}] Total jobs collected: {len(all_jobs)}")
         return all_jobs
+
+   
+    NEXT_BUTTON_SELECTORS = [
+        "a[aria-label='Next']",
+        "a[aria-label='next']",
+        "a[title='Next']",
+        "a.next",
+        "li.next a",
+        "a[rel='next']",
+        "button[aria-label='Next']",
+    ]
+
+    async def _go_to_next_page(self, page: Page, current_page_num: int, search_url: str) -> bool:
+      
+        for selector in self.NEXT_BUTTON_SELECTORS:
+            try:
+                next_button = await page.query_selector(selector)
+            except Exception:
+                continue
+            if not next_button:
+                continue
+            classes = (await next_button.get_attribute("class") or "")
+            aria_disabled = (await next_button.get_attribute("aria-disabled") or "")
+            if "disabled" in classes or aria_disabled == "true":
+                logger.info(f"[{self.source_name}] '{selector}' found but disabled (last page).")
+                continue
+            try:
+                await next_button.click()
+                await page.wait_for_load_state("networkidle")
+                logger.info(f"[{self.source_name}] Moved to page {current_page_num + 1} via '{selector}'.")
+                return True
+            except Exception as e:
+                logger.warning(f"[{self.source_name}] Click on '{selector}' failed: {e}")
+                continue
+
+        logger.warning(
+            f"[{self.source_name}] No working 'Next' button selector found on page "
+            f"{current_page_num} — falling back to offset URL navigation."
+        )
+
+        
+        offset = current_page_num * 15
+        sep = "&" if "?" in search_url else "?"
+        fallback_url = f"{search_url}{sep}start={offset}"
+        try:
+            await page.goto(fallback_url, wait_until="domcontentloaded", timeout=30000)
+            found = await page.query_selector("div[class*='css-pkv5jc']")
+            if found:
+                logger.info(f"[{self.source_name}] Moved to page {current_page_num + 1} via offset URL ({fallback_url}).")
+                return True
+            logger.info(f"[{self.source_name}] Offset URL returned no job cards — assuming last page.")
+            return False
+        except Exception as e:
+            logger.warning(f"[{self.source_name}] Offset URL navigation failed: {e}")
+            return False
 
     async def _parse_card_basic(self, card) -> Optional[dict]:
        
