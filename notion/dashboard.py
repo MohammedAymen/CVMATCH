@@ -105,7 +105,7 @@ class NotionDashboard:
 
         
         response = self.client.databases.create(
-            parent={"page_id": parent_id},
+            parent={"type": "page_id", "page_id": parent_id},
             title=[{"type": "text", "text": {"content": "🤖 Job Matcher Dashboard"}}],
         )
         db_id = response["id"]
@@ -295,13 +295,14 @@ class NotionDashboard:
         results = {"added": 0, "skipped": skipped, "failed": 0}
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-         
+            # future_to_job بيربط كل request بالـ job dict الأصلي عشان لما الصفحة
+            # تتعمل في Notion نحط لينكها جوه نفس الـ job (بيرجع للـ frontend بعد كده)
             futures = {executor.submit(self._add_single_job, job): job for job in to_add}
             for future in concurrent.futures.as_completed(futures):
                 job  = futures[future]
                 resp = future.result()
                 if resp:
-                    
+                    # بنحط لينك صفحة الـ Notion جوه الـ job نفسه عشان يوصل للـ API response
                     job["notion_page_id"]  = resp.get("id")
                     job["notion_page_url"] = resp.get("url")
                     results["added"] += 1

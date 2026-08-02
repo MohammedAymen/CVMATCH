@@ -22,9 +22,12 @@ class WuzzufScraper(BaseScraper):
 
         page: Page = await self._get_page()
 
-        search_url = f"{WUZZUF_BASE}/search/jobs?q={query.replace(' ', '+')}"
-        if location:
-            search_url += f"&l={location.replace(' ', '+')}"
+        q_param = query.replace(' ', '+')
+        l_param = location.replace(' ', '+') if location else ""
+
+        search_url = f"{WUZZUF_BASE}/search/jobs?q={q_param}"
+        if l_param:
+            search_url += f"&l={l_param}"
 
         logger.info(f"[{self.source_name}] Navigate to: {search_url}")
         await page.goto(search_url)
@@ -84,7 +87,7 @@ class WuzzufScraper(BaseScraper):
                     )
 
             if len(all_jobs) < max_jobs:
-                advanced = await self._go_to_next_page(page, page_num, search_url)
+                advanced = await self._go_to_next_page(page, page_num, q_param, l_param)
                 if advanced:
                     page_num += 1
                     self._human_delay(extra=2)
@@ -101,7 +104,8 @@ class WuzzufScraper(BaseScraper):
         logger.info(f"[{self.source_name}] Total jobs collected: {len(all_jobs)}")
         return all_jobs
 
-
+    # سيلكتورات محتملة لزرار "الصفحة التالية" — بنجرب كل واحد لحد ما نلاقي واحد شغال،
+    # عشان لو Wuzzuf غيّرت شكل الصفحة السيلكتور القديم يوقف بهدوء من غير ما يبوّظ كل حاجة.
     NEXT_BUTTON_SELECTORS = [
         "a[aria-label='Next']",
         "a[aria-label='next']",
@@ -112,8 +116,13 @@ class WuzzufScraper(BaseScraper):
         "button[aria-label='Next']",
     ]
 
-    async def _go_to_next_page(self, page: Page, current_page_num: int, search_url: str) -> bool:
-        
+    async def _go_to_next_page(self, page: Page, current_page_num: int, q_param: str, l_param: str) -> bool:
+        """
+        بيحاول ينتقل للصفحة اللي بعدها. أول حاجة بيدور على زرار Next بأكتر من سيلكتور،
+        ولو مفيش أي واحد منهم اشتغل، بيرجع لحل بديل: فتح رابط الصفحة التالية مباشرة
+        باستخدام start=<page_index> (start=1 = الصفحة التانية، start=2 = التالتة... إلخ —
+        اتأكدنا من الشكل ده فعليًا من متصفح حقيقي).
+        """
         for selector in self.NEXT_BUTTON_SELECTORS:
             try:
                 next_button = await page.query_selector(selector)
@@ -140,21 +149,38 @@ class WuzzufScraper(BaseScraper):
             f"{current_page_num} — falling back to offset URL navigation."
         )
 
-        
+        # بننسخ نفس ترتيب الباراميترز اللي اتأكد إنه شغال فعليًا: q, start, l
         offset = current_page_num
-        sep = "&" if "?" in search_url else "?"
-        fallback_url = f"{search_url}{sep}start={offset}"
+        fallback_url = f"{WUZZUF_BASE}/search/jobs?q={q_param}&start={offset}"
+        if l_param:
+            fallback_url += f"&l={l_param}"
+
         try:
-            await page.goto(fallback_url, wait_until="domcontentloaded", timeout=30000)
+            # بنستخدم نفس استراتيجية التحميل اللي نجحت في أول صفحة (مفيش wait_until مخصص +
+            # wait_for_selector بمهلة 15 ثانية) بدل domcontentloaded السريع اللي كان بيسبق
+            # تحميل المحتوى بالـ JS.
+            await page.goto(fallback_url, timeout=30000)
+            self._human_delay(extra=1.5)
             try:
-                await page.wait_for_selector("div[class*='css-pkv5jc']", timeout=10000)
+                await page.wait_for_selector("div[class*='css-pkv5jc']", timeout=15000)
             except Exception:
                 pass
+
             found = await page.query_selector("div[class*='css-pkv5jc']")
             if found:
                 logger.info(f"[{self.source_name}] Moved to page {current_page_num + 1} via offset URL ({fallback_url}).")
                 return True
-            logger.info(f"[{self.source_name}] Offset URL returned no job cards — assuming last page.")
+
+            # تشخيص إضافي عشان لو فشلت تاني نعرف السبب من اللوج مباشرة من غير تخمين
+            try:
+                page_title = await page.title()
+                body_snippet = (await page.inner_text("body"))[:200].replace("\n", " ")
+            except Exception:
+                page_title, body_snippet = "?", "?"
+            logger.info(
+                f"[{self.source_name}] Offset URL returned no job cards — assuming last page. "
+                f"url={page.url} title='{page_title}' body_start='{body_snippet}'"
+            )
             return False
         except Exception as e:
             logger.warning(f"[{self.source_name}] Offset URL navigation failed: {e}")
@@ -208,11 +234,11 @@ class WuzzufScraper(BaseScraper):
 
         detail_page = None
         try:
-           
+            # فتح tab جديد في نفس الـ context
             detail_page = await main_page.context.new_page()
             await detail_page.goto(job_url, timeout=30000, wait_until="domcontentloaded")
 
-            
+            # انتظر إن محتوى الوظيفة يظهر
             try:
                 await detail_page.wait_for_selector(
                     "section.css-5ks56s, div.css-fo5k8l, div[class*='description'], h3",
