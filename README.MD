@@ -301,8 +301,94 @@ A couple of real issues came up while shaking this project out — documenting t
 
 - Sessions are in-memory only — restarting the server or running multiple Uvicorn workers loses active sessions (fine for local/single-worker use, not production-ready as-is).
 - The embedding model reload-per-request issue above is still open.
-- No automated test suite yet — `scripts/` has manual per-module smoke tests.
+- `scripts/` has manual per-module smoke tests. An automated RAG-quality suite now lives in `evaluation/` + `tests/test_rag_triad.py` — see "Testing / RAG Triad evaluation" below.
 - `data/`, `logs/`, and `__pycache__/` should be excluded from version control (`.gitignore`) since real CVs and scrape logs land there during use.
+
+---
+
+## Testing / RAG Triad evaluation
+
+The matching pipeline is a RAG system (ChromaDB retrieval + LLM scoring), so
+"does it work" isn't a single test — it's three separate questions:
+
+1. **Context relevance** — is the ChromaDB retrieval step pulling CV/GitHub
+   chunks that are actually relevant to the job posting?
+2. **Groundedness** — is everything the LLM says (strengths, gaps,
+   explanation) actually backed by the retrieved chunks, or is it inventing
+   things ("hallucinating")?
+3. **Answer relevance** — does the final response actually address the job
+   (a clear match decision), rather than being generic or off-topic?
+
+This is the standard "RAG Triad" evaluation pattern. Each axis is scored
+0.0-1.0 by an LLM judge (reusing the project's own `AIClient` fallback
+chain), with reasoning kept alongside every score so a low score is
+debuggable, not just a number.
+
+```
+evaluation/
+  rag_triad.py    # the judge: context_relevance / groundedness / answer_relevance
+  dataset.py      # golden test set (fixed) + real job sampler (from data/checkpoints/)
+  report.py       # console table + markdown + json report generation
+  run_eval.py     # CLI entrypoint
+tests/
+  test_rag_triad.py   # pytest suite, marked `integration`
+```
+
+Run it standalone:
+
+```bash
+python -m evaluation.run_eval                          # golden set, top_k=10
+python -m evaluation.run_eval --source checkpoints --n 8   # sample real scraped jobs instead
+python -m evaluation.run_eval --judge-model gemini-2.5-flash   # force a specific judge model
+```
+
+This prints a per-job table (context/groundedness/answer scores + pass/fail),
+lists any hallucinated ("unsupported") claims explicitly, and writes a JSON +
+Markdown report to `data/eval_reports/`. Exit code is `1` if anything fails
+its threshold — plug it into CI or run it after any prompt change.
+
+Add `--update-readme` to also refresh the "Latest results" table below in
+this file:
+
+```bash
+python -m evaluation.run_eval --update-readme
+```
+
+### Latest results
+
+<!-- RAG_TRIAD_RESULTS_START -->
+_Last run: 2026-08-02 19:13 — 4/5 jobs passed._
+
+| Job | Context Relevance | Groundedness | Answer Relevance | Avg | Result |
+|---|---|---|---|---|---|
+| Python Backend Developer (FastAPI) | 0.56 | 0.93 | 0.90 | 0.80 | ✅ |
+| Senior Cloud/DevOps Engineer | 0.27 | 0.97 | 0.90 | 0.71 | ✅ |
+| AI/LLM Engineer | 0.61 | 0.88 | 0.90 | 0.80 | ✅ |
+| Enterprise Sales Account Executive | 0.00 | 0.86 | 0.90 | 0.59 | ✅ |
+| Junior QA Tester | 0.31 | 0.95 | 0.00 | 0.42 | ❌ |
+<!-- RAG_TRIAD_RESULTS_END -->
+
+Or run it as pytest:
+
+```bash
+pytest tests/test_rag_triad.py -v          # needs GROQ_API_KEY or GEMINI_API_KEY, and
+                                            # a non-empty data/chroma_db collection
+pytest tests/ -m "not integration"         # skip these in a fast/unit-only run
+```
+
+**Caveats worth knowing:**
+- These are integration tests: they call real LLM providers and cost tokens.
+  They're skipped (not failed) automatically if no provider is configured or
+  the ChromaDB collection is empty.
+- Judging with the same model chain used for generation can under-catch a
+  model's own blind spots. Pass `--judge-model` (or a differently-configured
+  `AIClient`) to judge with a different model than the one that generated
+  the response, when you can afford it.
+- The golden set in `evaluation/dataset.py` is deliberately small and
+  deliberately includes an "easy fail" case (a near-empty job posting) and a
+  wrong-domain case (sales vs. a technical profile) — these exist to catch
+  the pipeline being *too* confident, not just to check it works on easy
+  inputs. Extend it as you find more real failure patterns.
 
 ---
 

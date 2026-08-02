@@ -49,7 +49,7 @@ class ProviderState:
         )
 
     def mark_quota_exhausted(self):
-        """لما الـ quota تخلص، نعطله لمدة أطول (ساعة مثلاً)."""
+      
         self.mark_failure(backoff_seconds=3600.0)
         logger.warning(f"🚫 {self.name} quota exhausted — disabled for 1 hour")
 
@@ -61,9 +61,9 @@ class AIClient:
 
     
     GROQ_MODELS = [
-        "llama-3.3-70b-versatile",      
-        "llama-3.1-70b-versatile",      
-        "mixtral-8x7b-32768",               ]
+        "llama-3.3-70b-versatile",   
+        "openai/gpt-oss-120b",      
+    ]
 
     
     GEMINI_MODELS = [
@@ -132,6 +132,10 @@ class AIClient:
                 
                 logger.warning(f"⚠️ Custom provider failed, falling back to default chain: {e}")
 
+        last_error = None
+        any_attempted = False
+        skipped_cooldown = []
+
         for provider in self.PROVIDER_ORDER:
             state = self._states[provider]
 
@@ -144,8 +148,10 @@ class AIClient:
             if not state.is_available():
                 secs_left = max(0, state.disabled_until - time.time())
                 logger.debug(f"⏭️ Skipping {provider} (cooldown {secs_left:.0f}s remaining)")
+                skipped_cooldown.append((provider, secs_left))
                 continue
 
+            any_attempted = True
             logger.info(f"🔄 Trying {provider}...")
 
             
@@ -197,6 +203,12 @@ class AIClient:
             raise AllProvidersFailedError(
                 "No providers configured! Set GROQ_API_KEY, GEMINI_API_KEY, "
                 "or install a Qwen model via Ollama."
+            )
+        if not any_attempted:
+            cooldown_str = ", ".join(f"{p} ({s:.0f}s left)" for p, s in skipped_cooldown)
+            raise AllProvidersFailedError(
+                f"All configured providers are on cooldown right now: {cooldown_str}. "
+                "Wait for the cooldown to expire, or configure another provider."
             )
         raise AllProvidersFailedError(
             f"All providers failed. Last error: {last_error}"
@@ -421,14 +433,18 @@ class AIClient:
                     f"https://generativelanguage.googleapis.com/v1beta/models/"
                     f"{model}:generateContent?key={self.gemini_api_key}"
                 )
+                generation_config = {
+                    "temperature": temperature,
+                    "maxOutputTokens": max_tokens,
+                    "topP": 0.9,
+                }
+            
+                if any(tag in model for tag in ("2.5", "3.5")):
+                    generation_config["thinkingConfig"] = {"thinkingBudget": 0}
+
                 payload = {
                     "contents": [{"parts": [{"text": full_prompt}]}],
-                    "generationConfig": {
-                        "temperature": temperature,
-                        "maxOutputTokens": max_tokens,
-                        "topP": 0.9,
-                        
-                    },
+                    "generationConfig": generation_config,
                 }
                 resp = requests.post(url, json=payload, timeout=60)
 
@@ -487,6 +503,8 @@ class AIClient:
             "model": self.QWEN_MODEL,
             "messages": messages,
             "stream": False,
+     
+            "think": False,
             "options": {
                 "temperature": temperature,
                 "top_p": 0.85,
@@ -507,7 +525,10 @@ class AIClient:
             )
             resp.raise_for_status()
             data = resp.json()
-            return data.get("message", {}).get("content", "").strip()
+            content = data.get("message", {}).get("content", "").strip()
+        
+            content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+            return content
 
         except requests.exceptions.ConnectionError:
             raise RuntimeError("Ollama not running — start with: ollama serve")
