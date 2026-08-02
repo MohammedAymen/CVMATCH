@@ -21,6 +21,13 @@ Decision rubric (use judgment, this is guidance not a rigid formula):
 - "Skip": weak match, or critical gaps that are fundamental to the role (e.g. a required language/
   framework with zero evidence), or the role is simply a different domain than the candidate's profile.
 
+Experience-level mismatch is its own gap type, separate from skills, and must be checked explicitly:
+compare the years of experience required by the job (if stated) against the candidate's actual total
+professional experience (not coursework/personal projects). A large gap (e.g. job wants 5+ years,
+candidate has ~1 year) is a "high" impact mismatch and must block "Apply" — even when technical
+skills overlap looks strong — because seniority/scope of responsibility cannot be closed by learning
+a tool in a few weeks the way a skill gap can.
+
 Always respond with valid JSON only — no markdown, no preamble, no extra text."""
 
     def __init__(
@@ -79,7 +86,9 @@ Always respond with valid JSON only — no markdown, no preamble, no extra text.
 
 ## Evaluation Criteria:
 1. Technical skills alignment (programming languages, frameworks, tools)
-2. Experience level and domain relevance
+2. Experience level and domain relevance — explicitly extract the years of experience the job
+   requires (if stated) and the candidate's actual total professional experience, then quantify
+   the gap between them (see "experience_gap" in the output)
 3. Project evidence from GitHub supporting the role
 4. Education / certifications if mentioned
 5. Gaps that would prevent performing the job
@@ -90,6 +99,11 @@ Always respond with valid JSON only — no markdown, no preamble, no extra text.
   "confidence": "Medium",
   "decision": "Improve then apply",
   "explanation": "Strong Python/backend match, but the missing Docker experience is a real gap for this role — learnable in about a week.",
+  "experience_gap": {
+    "required_years": 5,
+    "candidate_years": 1,
+    "impact": "high"
+  },
   "strengths": [
     "Strong Python experience with FastAPI (3+ projects on GitHub)",
     "Relevant experience with async programming"
@@ -124,6 +138,14 @@ Rules:
 - gaps must be an array of objects with: skill, severity ("minor"|"moderate"|"critical"),
   effort_estimate (short string like "2 days", "1 week", "1 month"), learning_direction (concrete, not generic)
 - gaps can be an empty array if there are truly no gaps
+- experience_gap.required_years and experience_gap.candidate_years must be integers (use 0 if the
+  job posting doesn't state a required number of years, or if candidate experience can't be
+  determined from the profile)
+- experience_gap.impact must be exactly "none", "low", "medium", or "high", based on how large the
+  gap is relative to what's required (e.g. required=5, candidate=1 → "high"; required=3, candidate=2
+  → "low"/"medium"; required not stated → "none")
+- if experience_gap.impact is "high", decision must NOT be "Apply" — pick "Improve then apply" or
+  "Skip" instead, regardless of how strong the skills match is
 - Base ONLY on evidence in the provided profile snippets
 - Return ONLY the JSON object, nothing else"""
 
@@ -145,11 +167,18 @@ Rules:
             parsed["provider_used"] = response.provider_used.value  # للتتبع
             parsed["improvement_plan"] = self._build_improvement_plan(parsed.get("gaps", []))
 
+            avg_sim = 0.0
             if relevant_chunks:
                 avg_sim = sum(
                     c.get("similarity_score", 0) for c in relevant_chunks[:3]
                 ) / min(3, len(relevant_chunks))
                 parsed["avg_similarity"] = avg_sim
+
+            # confidence_factors: مبني على حساب كودي مباشر (مش رأي الموديل عن نفسه) —
+            # عشان "confidence: High" يبقى له سبب واضح تقدر تتحقق منه، مش كلام مرسل.
+            parsed["confidence_factors"] = self._compute_confidence_factors(
+                job_text, context, avg_sim
+            )
 
             logger.info(
                 f"📊 Score: {parsed.get('score', 0)}% "
@@ -166,6 +195,50 @@ Rules:
     
     VALID_DECISIONS = ("Apply", "Improve then apply", "Skip")
     VALID_SEVERITIES = ("minor", "moderate", "critical")
+
+    _STOPWORDS = {
+        "a", "an", "the", "and", "or", "of", "to", "in", "on", "for", "with",
+        "at", "by", "from", "as", "is", "are", "was", "were", "be", "been",
+        "being", "this", "that", "these", "those", "you", "your", "we", "our",
+        "will", "can", "may", "should", "must", "have", "has", "had", "do",
+        "does", "did", "not", "no", "yes", "if", "then", "than", "into",
+        "out", "about", "over", "under", "between", "within", "across",
+        "per", "etc", "all", "any", "who", "what", "when", "where", "how",
+        "job", "role", "work", "team", "years", "year", "experience",
+    }
+
+    @classmethod
+    def _extract_keywords(cls, text: str) -> set:
+        """
+        استخراج بسيط للكلمات المفتاحية (skills/tech terms) من نص — من غير أي LLM call.
+        ده مش NLP متقدم، ده overlap بسيط زي أدوات ATS، بس بيدي رقم قابل للتحقق
+        بدل ما نصدّق "confidence: High" من غير أي سبب واضح.
+        """
+        tokens = re.findall(r"[A-Za-z][A-Za-z0-9+#.\-]{1,}", text or "")
+        return {
+            t.lower() for t in tokens
+            if t.lower() not in cls._STOPWORDS and len(t) >= 3
+        }
+
+    @classmethod
+    def _compute_confidence_factors(
+        cls, job_text: str, profile_context: str, avg_similarity: float
+    ) -> Dict[str, Any]:
+        
+        job_keywords     = cls._extract_keywords(job_text)
+        profile_keywords = cls._extract_keywords(profile_context)
+        matched           = job_keywords & profile_keywords
+
+        coverage_pct = (
+            round(100 * len(matched) / len(job_keywords), 1) if job_keywords else 0.0
+        )
+
+        return {
+            "avg_similarity": round(avg_similarity, 3),
+            "matched_keywords_count": len(matched),
+            "job_keywords_total": len(job_keywords),
+            "keyword_coverage_pct": coverage_pct,
+        }
 
     @classmethod
     def _parse_score_response(cls, text: str) -> Dict[str, Any]:
@@ -259,11 +332,13 @@ Rules:
         data["strengths"]       = data.get("strengths") or []
         data["recommendations"] = data.get("recommendations") or []
         data["gaps"]            = cls._normalize_gaps(data.get("gaps") or [])
+        data["experience_gap"]  = cls._normalize_experience_gap(data.get("experience_gap"))
 
         decision = data.get("decision")
         has_critical = any(g.get("severity") == "critical" for g in data["gaps"])
+        high_exp_gap = data["experience_gap"]["impact"] == "high"
         if decision not in cls.VALID_DECISIONS:
-            data["decision"] = cls._fallback_decision(data["score"], data["confidence"], has_critical)
+            data["decision"] = cls._fallback_decision(data["score"], data["confidence"], has_critical or high_exp_gap)
             data["_decision_was_computed_locally"] = True
         else:
             data["decision"] = decision
@@ -272,6 +347,11 @@ Rules:
                 data["_flagged_for_review"] = True
             elif data["decision"] == "Apply" and (data["score"] < 40 or has_critical):
                 data["_flagged_for_review"] = True
+
+       
+        if high_exp_gap and data["decision"] == "Apply":
+            data["decision"] = "Improve then apply"
+            data["_decision_downgraded_experience_gap"] = True
 
         if not data.get("explanation"):
             data["explanation"] = cls._fallback_explanation(
@@ -305,6 +385,30 @@ Rules:
                     "learning_direction": "",
                 })
         return normalized
+
+    VALID_IMPACTS = ("none", "low", "medium", "high")
+
+    @staticmethod
+    def _normalize_experience_gap(raw: Any) -> Dict[str, Any]:
+        
+        if not isinstance(raw, dict):
+            return {"required_years": 0, "candidate_years": 0, "impact": "none"}
+
+        def _to_int(v):
+            try:
+                return max(0, int(v))
+            except (TypeError, ValueError):
+                return 0
+
+        impact = raw.get("impact", "none")
+        if impact not in JobScorer.VALID_IMPACTS:
+            impact = "none"
+
+        return {
+            "required_years": _to_int(raw.get("required_years", 0)),
+            "candidate_years": _to_int(raw.get("candidate_years", 0)),
+            "impact": impact,
+        }
 
     @staticmethod
     def _fallback_decision(score: int, confidence: str, has_critical_gap: bool) -> str:

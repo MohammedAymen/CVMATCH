@@ -145,7 +145,9 @@ class MatchingPipeline:
             "improvement_plan": score_result.get("improvement_plan", []),
             "recommendations":  score_result.get("recommendations", []),
             "avg_similarity":   score_result.get("avg_similarity", 0),
-            "scored_by":        score_result.get("provider_used", "unknown"),  # للتتبع
+            "experience_gap":   score_result.get("experience_gap", {"required_years": 0, "candidate_years": 0, "impact": "none"}),
+            "confidence_factors": score_result.get("confidence_factors", {}),
+            "scored_by":        score_result.get("provider_used", "unknown"),  
             "from_cache":       score_result.get("from_cache", False),
         })
 

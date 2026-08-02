@@ -1,5 +1,3 @@
-
-
 import sys
 import asyncio
 
@@ -62,6 +60,19 @@ class ImprovementPlanItem(BaseModel):
     learning_direction: str
 
 
+class ExperienceGap(BaseModel):
+    required_years: int = 0
+    candidate_years: int = 0
+    impact: str = "none"
+
+
+class ConfidenceFactors(BaseModel):
+    avg_similarity: float = 0.0
+    matched_keywords_count: int = 0
+    job_keywords_total: int = 0
+    keyword_coverage_pct: float = 0.0
+
+
 class JobResponse(BaseModel):
     title: str
     company: str
@@ -77,6 +88,8 @@ class JobResponse(BaseModel):
     apply_link: Optional[str] = None
     scored_by: Optional[str] = None    
     from_cache: bool = False
+    experience_gap: ExperienceGap = ExperienceGap()
+    confidence_factors: ConfidenceFactors = ConfidenceFactors()
 
 
 
@@ -102,6 +115,8 @@ class ManualJobResponse(BaseModel):
     recommendations: List[str]
     scored_by: Optional[str] = None
     from_cache: bool = False
+    experience_gap: ExperienceGap = ExperienceGap()
+    confidence_factors: ConfidenceFactors = ConfidenceFactors()
 
 
 class SearchResponse(BaseModel):
@@ -419,6 +434,8 @@ async def search_jobs(
             apply_link=job.get("apply_link"),
             scored_by=job.get("scored_by"),
             from_cache=job.get("from_cache", False),
+            experience_gap=job.get("experience_gap") or {},
+            confidence_factors=job.get("confidence_factors") or {},
         )
         for job in results["stage3_final"][:20]
     ]
@@ -481,6 +498,8 @@ async def analyze_manual_job(
         recommendations=result.get("recommendations", []),
         scored_by=result.get("provider_used"),
         from_cache=result.get("from_cache", False),
+        experience_gap=result.get("experience_gap") or {},
+        confidence_factors=result.get("confidence_factors") or {},
     )
 
 
