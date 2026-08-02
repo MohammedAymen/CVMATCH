@@ -101,7 +101,7 @@ class WuzzufScraper(BaseScraper):
         logger.info(f"[{self.source_name}] Total jobs collected: {len(all_jobs)}")
         return all_jobs
 
-   
+
     NEXT_BUTTON_SELECTORS = [
         "a[aria-label='Next']",
         "a[aria-label='next']",
@@ -113,7 +113,7 @@ class WuzzufScraper(BaseScraper):
     ]
 
     async def _go_to_next_page(self, page: Page, current_page_num: int, search_url: str) -> bool:
-      
+        
         for selector in self.NEXT_BUTTON_SELECTORS:
             try:
                 next_button = await page.query_selector(selector)
@@ -141,11 +141,15 @@ class WuzzufScraper(BaseScraper):
         )
 
         
-        offset = current_page_num * 15
+        offset = current_page_num
         sep = "&" if "?" in search_url else "?"
         fallback_url = f"{search_url}{sep}start={offset}"
         try:
             await page.goto(fallback_url, wait_until="domcontentloaded", timeout=30000)
+            try:
+                await page.wait_for_selector("div[class*='css-pkv5jc']", timeout=10000)
+            except Exception:
+                pass
             found = await page.query_selector("div[class*='css-pkv5jc']")
             if found:
                 logger.info(f"[{self.source_name}] Moved to page {current_page_num + 1} via offset URL ({fallback_url}).")
@@ -204,11 +208,11 @@ class WuzzufScraper(BaseScraper):
 
         detail_page = None
         try:
-            # فتح tab جديد في نفس الـ context
+           
             detail_page = await main_page.context.new_page()
             await detail_page.goto(job_url, timeout=30000, wait_until="domcontentloaded")
 
-            # انتظر إن محتوى الوظيفة يظهر
+            
             try:
                 await detail_page.wait_for_selector(
                     "section.css-5ks56s, div.css-fo5k8l, div[class*='description'], h3",
