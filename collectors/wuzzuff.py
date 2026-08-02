@@ -61,9 +61,16 @@ class WuzzufScraper(BaseScraper):
                     logger.warning(f"Error parsing card: {e}")
 
            
-            for basic in basic_list:
+            for i, basic in enumerate(basic_list):
                 if len(all_jobs) >= max_jobs:
                     break
+
+                # بنستنى شوية قبل كل وظيفة (إلا الأولى) — عشان نفتح الوظايف واحدة واحدة
+                # على مهلنا زي إنسان بيقرا، مش كلهم مرة واحدة ورا بعض (ده اللي كان بيخلي
+                # Cloudflare يشك إننا bot ويوقفنا).
+                if i > 0:
+                    self._human_delay()
+
                 description, requirements = await self._fetch_details_playwright(
                     page, basic["apply_link"]
                 )
