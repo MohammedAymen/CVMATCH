@@ -26,8 +26,7 @@ from collectors.indeed import IndeedScraper
 async def main():
     query = sys.argv[1] if len(sys.argv) > 1 else "python developer"
     location = sys.argv[2] if len(sys.argv) > 2 else "Egypt"
-    max_jobs = 1
-#int(sys.argv[3]) if len(sys.argv) > 3 else 5
+    max_jobs = int(sys.argv[3]) if len(sys.argv) > 3 else 5
     print(f"🔍 بنبحث عن: '{query}' | location='{location}' | max_jobs={max_jobs}")
     print("-" * 60)
 

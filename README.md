@@ -303,6 +303,7 @@ A couple of real issues came up while shaking this project out — documenting t
 - The embedding model reload-per-request issue above is still open.
 - `scripts/` has manual per-module smoke tests. An automated RAG-quality suite now lives in `evaluation/` + `tests/test_rag_triad.py` — see "Testing / RAG Triad evaluation" below.
 - `data/`, `logs/`, and `__pycache__/` should be excluded from version control (`.gitignore`) since real CVs and scrape logs land there during use.
+- Hosted-provider model names (`GROQ_MODELS` in `core/ai_client.py`) are hardcoded and will break silently (404s buried in retry logs) whenever a provider deprecates a model — worth an occasional check against the provider's own deprecation page rather than waiting for it to show up as mysterious rate-limit-looking failures.
 
 ---
 
@@ -389,6 +390,76 @@ pytest tests/ -m "not integration"         # skip these in a fast/unit-only run
   wrong-domain case (sales vs. a technical profile) — these exist to catch
   the pipeline being *too* confident, not just to check it works on easy
   inputs. Extend it as you find more real failure patterns.
+
+### Repeated-run accuracy, not a single pass/fail
+
+Because scoring runs through an LLM, a single green pytest run doesn't mean
+much on its own — the same prompt can pass on one run and fail on the next.
+`scripts/run_accuracy_eval.py` (standalone, not part of pytest) repeats the
+golden set N times and reports a **pass-rate percentage per job**, plus the
+overall aggregate and per-metric standard deviation, specifically to
+distinguish "this job is stable" from "this job is flaky":
+
+```bash
+python scripts/run_accuracy_eval.py --runs 5
+python scripts/run_accuracy_eval.py --job "AI/LLM" --runs 3 --verbose   # focus + full failure detail
+python scripts/run_accuracy_eval.py --fast                             # quick check, skips the slow local fallback
+```
+
+### RAG quality: issues found and fixed via the evaluation harness
+
+Running the golden set repeatedly (not once) surfaced several real bugs that
+a single pass would have missed entirely, since this is a probabilistic
+system. In rough order of how they were found:
+
+1. **Retrieval was silently dropping evidence.** `matching/scorer.py`
+   fetched 10 chunks but only forwarded the first 5 to the LLM. A
+   candidate's own "Skills" chunk mentioning a specific tool consistently
+   ranked outside that cutoff (short keyword lists score lower semantically
+   than narrative project chunks), so the LLM — correctly, given what it was
+   shown — claimed the skill was missing. Fixed with a hybrid retrieval step
+   (`ProfileEmbedder.retrieve_hybrid_chunks`): dense top-5 plus up to 3
+   keyword-matched chunks for any tool/skill named explicitly in the job
+   posting, so token cost only grows when there's an actual gap to close.
+
+2. **The few-shot example in the prompt was leaking into unrelated jobs.**
+   The "Required JSON Output" example used a real, specific gap on a
+   same-domain example job. The model was pattern-completing the example
+   instead of reading the actual context, on a subset of runs. Rewrote the
+   example around unrelated skills, added an explicit "this is a format
+   example, not content to copy" instruction, plus a self-check rule
+   ("before listing a gap, re-check it's actually absent from the context
+   above").
+
+3. **Reasoning-model output was silently corrupting parsed gaps.** After a
+   Groq model deprecation forced a switch to reasoning-capable models that
+   emit visible `<think>...</think>` output before the JSON, the Groq call
+   path had no stripping for it (only the local Qwen path did), breaking
+   JSON parsing intermittently. Worse, the fallback "partial JSON recovery"
+   path treated `gaps` as a flat string array when it's actually an array of
+   objects, so any recovery attempt silently produced zero gaps instead of
+   the real ones. Fixed both: `<think>` stripping on the Groq path, and a
+   dedicated object-aware extractor for `gaps`.
+
+4. **The judge could fall back to the same small model it was meant to be
+   checking.** When the primary providers were both rate-limited,
+   `RAGTriadJudge` inherited the scorer's full fallback chain, including a
+   small local model — which then both answered *and judged its own
+   answer*, occasionally inventing claims that were never in the response
+   it was grading. The judge now runs on an independent client instance
+   restricted to the two hosted providers (sharing the same circuit-breaker
+   state, separate provider order), so it never grades using the weakest
+   available model.
+
+5. **A single transient rate-limit response disabled a provider for a full
+   hour.** The quota-exhausted handler fired on the *first* 429, with no
+   retry. It now gets the same retry-with-backoff treatment as any other
+   error, only escalating to the hour-long cooldown after retries are
+   exhausted.
+
+None of this shows up as a single "broken" test — it shows up as a stability
+rate across repeated runs, which is exactly what `run_accuracy_eval.py`
+above was built to catch.
 
 ---
 

@@ -68,7 +68,7 @@ Always respond with valid JSON only — no markdown, no preamble, no extra text.
 
         
         context_parts = []
-        for i, chunk in enumerate(relevant_chunks[:5], 1):
+        for i, chunk in enumerate(relevant_chunks[:8], 1):
             source = chunk.get("metadata", {}).get("source", "unknown")
             repo   = chunk.get("metadata", {}).get("repo_name", "")
             label  = f"{source} ({repo})" if repo else source
@@ -94,39 +94,44 @@ Always respond with valid JSON only — no markdown, no preamble, no extra text.
 5. Gaps that would prevent performing the job
 
 ## Required JSON Output:
+IMPORTANT: the example below shows the required FORMAT and field types only. The specific skill
+names, numbers, and wording in it (e.g. which skill is missing, how many years) are placeholders
+from an unrelated example role — do NOT copy them or let them influence your answer. Every value
+you output must come strictly from THIS job's text and THIS candidate's profile snippets above,
+never from this example.
 {{
   "score": 75,
   "confidence": "Medium",
   "decision": "Improve then apply",
-  "explanation": "Strong Python/backend match, but the missing Docker experience is a real gap for this role — learnable in about a week.",
+  "explanation": "Strong data-pipeline match, but the missing message-queue experience is a real gap for this role — learnable in about a week.",
   "experience_gap": {{
     "required_years": 5,
     "candidate_years": 1,
     "impact": "high"
   }},
   "strengths": [
-    "Strong Python experience with FastAPI (3+ projects on GitHub)",
-    "Relevant experience with async programming"
+    "Strong Go experience with gRPC (3+ projects on GitHub)",
+    "Relevant experience with distributed systems"
   ],
   "gaps": [
     {{
-      "skill": "Docker / containerization",
+      "skill": "Message queue systems (Kafka / RabbitMQ)",
       "severity": "critical",
       "effort_estimate": "1 week",
-      "learning_direction": "Dockerize one existing project, learn docker-compose basics, deploy it once end-to-end"
+      "learning_direction": "Build a small producer/consumer demo with RabbitMQ, then read Kafka fundamentals"
     }},
     {{
-      "skill": "Cloud platform experience (AWS/GCP/Azure)",
+      "skill": "GraphQL API design",
       "severity": "moderate",
       "effort_estimate": "2-3 weeks",
-      "learning_direction": "Deploy a small project on free-tier AWS/Render, focus on the specific services mentioned in the job"
+      "learning_direction": "Convert one existing REST endpoint to GraphQL using a schema-first approach"
     }}
   ],
   "recommendations": [
-    "Add a Dockerized project to GitHub",
-    "Highlight any deployment experience in CV"
+    "Add a message-queue-based project to GitHub",
+    "Highlight any distributed-systems experience in CV"
   ],
-  "summary": "Solid backend developer with Python expertise but lacks DevOps/cloud skills required for this role."
+  "summary": "Solid backend developer with strong core language skills but lacks certain integration skills required for this role."
 }}
 
 Rules:
@@ -151,13 +156,16 @@ Rules:
 - if experience_gap.impact is "high", decision must NOT be "Apply" — pick "Improve then apply" or
   "Skip" instead, regardless of how strong the skills match is
 - Base ONLY on evidence in the provided profile snippets
+- Before listing any skill/tool in "gaps" as missing, re-read the candidate profile snippets above
+  and check whether that exact skill/tool (or a close synonym) is mentioned anywhere in them. If it
+  is mentioned, it is NOT a gap — do not include it, even if the job posting emphasizes it heavily
 - Return ONLY the JSON object, nothing else"""
 
         try:
             response = self.client.complete(
                 prompt=prompt,
                 system_prompt=self.SYSTEM_PROMPT,
-                temperature=0.15,
+                temperature=0.0,
                 max_tokens=3500,  
                 custom_api_key=custom_api_key,
                 custom_base_url=custom_base_url,
@@ -316,8 +324,31 @@ Rules:
                     return re.findall(r'"([^"]+)"', m.group(1))
                 return []
 
+            def _extract_gap_objects(key: str) -> List[dict]:
+                # gaps شكلها array of objects مش نصوص بسيطة — لازم استخراج مختلف
+                # عشان مانفقدش الـ gaps وقت الـ JSON التالف/المقطوع
+                pat = rf'"{key}"\s*:\s*\[(.*?)(?:\]\s*,\s*"|\]\s*\}}|$)'
+                m = re.search(pat, partial, re.DOTALL)
+                if not m:
+                    return []
+                section = m.group(1)
+                obj_strings = re.findall(r'\{[^{}]*\}', section, re.DOTALL)
+                result = []
+                for obj_str in obj_strings:
+                    skill_m = re.search(r'"skill"\s*:\s*"([^"]*)"', obj_str)
+                    if not skill_m:
+                        continue
+                    sev_m = re.search(r'"severity"\s*:\s*"([^"]*)"', obj_str)
+                    effort_m = re.search(r'"effort_estimate"\s*:\s*"([^"]*)"', obj_str)
+                    result.append({
+                        "skill": skill_m.group(1),
+                        "severity": sev_m.group(1) if sev_m else "unknown",
+                        "effort_estimate": effort_m.group(1) if effort_m else "",
+                    })
+                return result
+
             data["strengths"]       = _extract_str_array("strengths")
-            data["gaps"]            = _extract_str_array("gaps")  
+            data["gaps"]            = _extract_gap_objects("gaps")
             data["recommendations"] = _extract_str_array("recommendations")
 
             if data.get("score"):
@@ -476,7 +507,7 @@ def score_job_with_profile(
     job_requirements: str,
     embedder,
     scorer: JobScorer,
-    top_k_chunks: int = 10,
+    top_k_chunks: int = 5,
     custom_api_key: Optional[str] = None,
     custom_base_url: Optional[str] = None,
     custom_model: Optional[str] = None,
@@ -497,7 +528,21 @@ def score_job_with_profile(
             return cached
 
     query_text = f"{job_description}\n{job_requirements}"
-    similar = embedder.retrieve_similar_chunks(query_text, top_k=top_k_chunks)
+    job_text_for_keywords = f"{job_title}\n{job_description}\n{job_requirements}"
+
+    # hybrid retrieval: dense (semantic) top_k_chunks + أي chunk بيحتوي على مهارة/أداة
+    # مذكورة صراحة في الوظيفة ومش طالعة أصلاً في نتائج الـ dense — عشان مانخسرش
+    # معلومة حقيقية (زي Docker) لمجرد إن ترتيبها الدلالي طلع برا أول top_k_chunks،
+    # من غير ما نزوّد عدد الـ chunks لكل الوظايف بشكل ثابت (توفير توكنز).
+    if hasattr(embedder, "retrieve_hybrid_chunks"):
+        similar = embedder.retrieve_hybrid_chunks(
+            query_text,
+            job_text=job_text_for_keywords,
+            dense_top_k=top_k_chunks,
+            max_keyword_extra=3,
+        )
+    else:
+        similar = embedder.retrieve_similar_chunks(query_text, top_k=top_k_chunks)
 
     if not similar:
         logger.warning(f"No similar chunks for job: {job_title}")

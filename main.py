@@ -85,6 +85,8 @@ class JobResponse(BaseModel):
     gaps: List[GapDetail]
     improvement_plan: List[ImprovementPlanItem]
     recommendations: List[str]
+    description: str = ""
+    requirements: str = ""
     apply_link: Optional[str] = None
     notion_page_url: Optional[str] = None
     scored_by: Optional[str] = None    
@@ -433,6 +435,8 @@ async def search_jobs(
             gaps=job.get("gaps", [])[:5],
             improvement_plan=job.get("improvement_plan", []),
             recommendations=job.get("recommendations", [])[:3],
+            description=job.get("description", ""),
+            requirements=job.get("requirements", ""),
             apply_link=job.get("apply_link"),
             notion_page_url=job.get("notion_page_url"),
             scored_by=job.get("scored_by"),

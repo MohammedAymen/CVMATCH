@@ -1,4 +1,5 @@
 import hashlib
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -16,6 +17,23 @@ DEFAULT_BATCH_SIZE = 32
 NOMIC_DOCUMENT_PREFIX = "search_document: "
 NOMIC_QUERY_PREFIX = "search_query: "
 
+# كلمات شائعة/تنسيقية في نصوص الوظائف مش تقنية، بنستبعدها من الكيوورد ماتشينج.
+_STOPWORDS = {
+    "the", "a", "an", "and", "or", "but", "if", "is", "are", "was", "were",
+    "be", "been", "being", "have", "has", "had", "do", "does", "did",
+    "will", "would", "should", "could", "can", "may", "might", "must",
+    "this", "that", "these", "those", "i", "we", "you", "he", "she", "it",
+    "they", "our", "your", "their", "his", "her", "its", "for", "with",
+    "about", "against", "between", "into", "through", "during", "before",
+    "after", "above", "below", "to", "from", "up", "down", "in", "out",
+    "on", "off", "over", "under", "again", "further", "then", "once",
+    "job", "description", "requirements", "responsibilities", "skills",
+    "experience", "years", "candidate", "role", "team", "company",
+    "apply", "now", "offer", "process", "interview", "nice", "haves",
+    "us", "who", "what", "where", "when", "why", "how",
+    "not", "no", "yes", "all", "any", "each", "other", "some", "such",
+    "only", "own", "same", "so", "than", "too", "very", "just", "also",
+}
 
 Document = Dict[str, Any]
 MetadataValue = Union[str, int, float, bool]
@@ -233,6 +251,78 @@ class ProfileEmbedder:
                     "similarity_score": 1 - distances[0][i],
                 })
         return retrieved
+
+    def _extract_tech_tokens(self, text: str) -> set:
+        """
+        بتستخرج كلمات محتمل تكون أسماء تقنية/أدوات (زي Docker, PostgreSQL, C++)
+        من نص حر (من وصف الوظيفة مثلاً)، مستبعدين الكلمات الشائعة من _STOPWORDS.
+        الهدف: نلاقي مصطلحات تقنية مذكورة حرفياً في نص الوظيفة
+        عشان نتأكد من وجودها براجعين (whole word) جوه الـ chunks.
+        """
+        tokens = re.findall(r"[A-Za-z][A-Za-z0-9]*(?:[+#./][A-Za-z0-9]+)*", text)
+        result = set()
+        for t in tokens:
+            tl = t.lower()
+            if len(t) < 2 or tl in _STOPWORDS:
+                continue
+            # نسيب التوكن لو بيبديب بحرف كابيتال (اسم علم/تقنية)،
+            # أو فيه رقم أو رمز (C++, CI/CD, .NET)، أو اختصار كله كابيتال (AWS, API)
+            if t[0].isupper() or any(ch.isdigit() for ch in t) or any(ch in "+#./" for ch in t):
+                result.add(t)
+        return result
+
+    def retrieve_hybrid_chunks(
+        self,
+        query_text: str,
+        job_text: Optional[str] = None,
+        dense_top_k: int = 5,
+        max_keyword_extra: int = 3,
+    ) -> List[Dict]:
+        """
+        استرجاع هجين (dense) + كلمي حرفي (keyword). الهدف: لو الوظيفة ذكرت مهارة
+        تقنية محددة (زي Docker) موجودة حرفياً في بروفايل المرشحبس بالاسمبسة،
+        بس الترتيب الدلالي موردشاشهاش برا أول dense_top_k، نضمن هي دخولها السياق.
+        في الغالب (مفيش keyword gap) مهينرجع dense بس، فمش استهلاك توكنز زيادة.
+        """
+        dense = self.retrieve_similar_chunks(query_text, top_k=dense_top_k)
+        if not job_text:
+            return dense
+
+        job_tokens = self._extract_tech_tokens(job_text)
+        if not job_tokens:
+            return dense
+
+        dense_texts = {d["text"] for d in dense}
+
+        try:
+            all_res = self.collection.get(include=["documents", "metadatas"])
+        except Exception as e:
+            logger.warning(f"Hybrid keyword search failed, falling back to dense-only: {e}")
+            return dense
+
+        extra = []
+        for doc, meta in zip(all_res.get("documents", []) or [], all_res.get("metadatas", []) or []):
+            if doc in dense_texts:
+                continue
+            matched = [t for t in job_tokens if re.search(rf"\b{re.escape(t)}\b", doc, re.IGNORECASE)]
+            if matched:
+                extra.append({
+                    "text": doc,
+                    "metadata": meta,
+                    "similarity_score": None,
+                    "matched_keywords": matched,
+                })
+
+        extra.sort(key=lambda c: len(c["matched_keywords"]), reverse=True)
+        extra = extra[:max_keyword_extra]
+
+        if extra:
+            logger.info(
+                f"🔑 Hybrid retrieval added {len(extra)} keyword-matched chunk(s): "
+                f"{[c['matched_keywords'] for c in extra]}"
+            )
+
+        return dense + extra
 
 
     def get_collection_stats(self) -> Dict[str, Any]:

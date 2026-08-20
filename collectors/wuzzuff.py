@@ -65,9 +65,7 @@ class WuzzufScraper(BaseScraper):
                 if len(all_jobs) >= max_jobs:
                     break
 
-                # بنستنى شوية قبل كل وظيفة (إلا الأولى) — عشان نفتح الوظايف واحدة واحدة
-                # على مهلنا زي إنسان بيقرا، مش كلهم مرة واحدة ورا بعض (ده اللي كان بيخلي
-                # Cloudflare يشك إننا bot ويوقفنا).
+               
                 if i > 0:
                     self._human_delay()
 
@@ -94,10 +92,12 @@ class WuzzufScraper(BaseScraper):
                     )
 
             if len(all_jobs) < max_jobs:
+               
+                self._human_delay(extra=5)
+                page = await self._rotate_context()
                 advanced = await self._go_to_next_page(page, page_num, q_param, l_param)
                 if advanced:
                     page_num += 1
-                    self._human_delay(extra=2)
                 else:
                     logger.info(
                         f"[{self.source_name}] No more pages after page {page_num} "
@@ -124,12 +124,7 @@ class WuzzufScraper(BaseScraper):
     ]
 
     async def _go_to_next_page(self, page: Page, current_page_num: int, q_param: str, l_param: str) -> bool:
-        """
-        بيحاول ينتقل للصفحة اللي بعدها. أول حاجة بيدور على زرار Next بأكتر من سيلكتور،
-        ولو مفيش أي واحد منهم اشتغل، بيرجع لحل بديل: فتح رابط الصفحة التالية مباشرة
-        باستخدام start=<page_index> (start=1 = الصفحة التانية، start=2 = التالتة... إلخ —
-        اتأكدنا من الشكل ده فعليًا من متصفح حقيقي).
-        """
+    
         for selector in self.NEXT_BUTTON_SELECTORS:
             try:
                 next_button = await page.query_selector(selector)
@@ -253,16 +248,6 @@ class WuzzufScraper(BaseScraper):
                 )
             except Exception:
                 pass  
-
-           
-            for selector in ["button:has-text('Read more')", "button:has-text('Show more')"]:
-                try:
-                    btn = detail_page.locator(selector)
-                    if await btn.count() > 0:
-                        await btn.first.click()
-                        self._human_delay(extra=0.5)
-                except Exception:
-                    pass
 
             page_text = await detail_page.inner_text("body")
 

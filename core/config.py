@@ -34,7 +34,8 @@ class Settings:
     notion_database_id = os.getenv("NOTION_DATABASE_ID", None)
 
     google_api_key = os.getenv("GEMINI_API_KEY", None)
-
+    gemini_api_key = google_api_key
+    
     groq_api_key = os.getenv("GROQ_API_KEY", None)
 
 settings = Settings()

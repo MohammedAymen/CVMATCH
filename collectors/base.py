@@ -11,6 +11,15 @@ from core.config import settings
 from core.logger import logger
 from core.models import RawJob
 
+# كذا user agent شائع لمتصفحات Chrome حقيقية — بنختار واحد عشوائي مع كل context
+# جديد بدل ما نستخدم نفس الـ UA طول الوقت. ده مش أهم حاجة (الجلسة/الكوكيز هي
+# الأهم) لكنه بيقلل التكرار في الـ fingerprint.
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+]
+
 
 class BaseScraper(ABC):
     source_name: str = "unknown"
@@ -38,29 +47,29 @@ class BaseScraper(ABC):
         if self._context is None:
             self._context = await browser.new_context(
                 viewport={"width": 1280, "height": 800},
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+                user_agent=random.choice(USER_AGENTS),
             )
         page = await self._context.new_page()
         return page
 
-    async def _get_isolated_page(self) -> tuple[Page, BrowserContext]:
-        
-        browser = await self._init_browser()
-        context = await browser.new_context(
-            viewport={"width": 1280, "height": 800},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-        )
-        page = await context.new_page()
-        return page, context
+    async def _rotate_context(self) -> Page:
+        """
+        بتقفل الـ context الحالي (بكل الكوكيز والـ session بتاعته) وتفتح واحد
+        جديد تمامًا — زي ما لو زائر جديد داخل الموقع لأول مرة. المتصفح (browser)
+        نفسه بيفضل شغال، بس الجلسة اللي Cloudflare بيتتبعها بتتصفّر.
 
-    async def _safe_click(self, page: Page, selector: str, timeout: int = 5000):
-        try:
-            await page.wait_for_selector(selector, timeout=timeout)
-            await page.click(selector)
-            return True
-        except Exception as e:
-            logger.warning(f"[{self.source_name}] Failed to click {selector}: {e}")
-            return False
+        ليه محتاجينها: بعد ما نفتح كذا تاب تفاصيل ورا بعض جوه نفس الـ context،
+        أي طلب تاني (زي الانتقال لصفحة نتايج جديدة) ممكن يتحظر لأن النمط ده
+        (كذا طلب سريع من نفس الجلسة) شكله بوت. فبنكسر الجلسة قبل ما نطلب صفحة
+        نتايج جديدة، بدل ما نحاول نصلّح الحظر بعد ما يحصل.
+        """
+        if self._context:
+            try:
+                await self._context.close()
+            except Exception:
+                pass
+            self._context = None
+        return await self._get_page()
 
     async def close(self):
         if self._context:

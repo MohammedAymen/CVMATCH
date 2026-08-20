@@ -40,9 +40,16 @@ def judge(ai_client):
     return RAGTriadJudge(ai_client=ai_client)
 
 
-def _run_triad(job, embedder, scorer, judge, top_k=10):
+def _run_triad(job, embedder, scorer, judge, top_k=5):
     query_text = f"Job title: {job['title']}\n{job.get('description', '')}\n{job.get('requirements', '')}"
-    contexts = embedder.retrieve_similar_chunks(query_text, top_k=top_k)
+    # بنستخدم نفس مسار الإنتاج الحقيقي (hybrid retrieval) في score_job_with_profile،
+    # عشان التيست يقيس السلوك الفعليبدل من مسار دينس بس مختلف عن الإنتاج.
+    if hasattr(embedder, "retrieve_hybrid_chunks"):
+        contexts = embedder.retrieve_hybrid_chunks(
+            query_text, job_text=query_text, dense_top_k=top_k, max_keyword_extra=3
+        )
+    else:
+        contexts = embedder.retrieve_similar_chunks(query_text, top_k=top_k)
     response = scorer.score_job(
         job_title=job["title"],
         job_description=job.get("description", ""),

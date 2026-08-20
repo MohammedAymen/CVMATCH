@@ -61,8 +61,8 @@ class AIClient:
 
     
     GROQ_MODELS = [
-        "llama-3.3-70b-versatile",   
-        "openai/gpt-oss-120b",      
+        "openai/gpt-oss-120b",   # البديل الرسمي بعد إيقاف llama-3.3-70b-versatile في 16/8/2026
+        "qwen/qwen3.6-27b",      # بديل رسمي تاني — حد TPM منفصل عن gpt-oss-120b
     ]
 
     
@@ -364,7 +364,11 @@ class AIClient:
 
                 resp.raise_for_status()
                 data = resp.json()
-                return data["choices"][0]["message"]["content"].strip()
+                content = data["choices"][0]["message"]["content"].strip()
+                # موديلات زي gpt-oss-120b و qwen3.6-27b بترجع تفكيرها بصوت عالي
+                # جوه <think>...</think> قبل الـ JSON — لازم نشيلها قبل الـ parsing
+                content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+                return content
 
             except QuotaExhaustedError:
                 raise  
