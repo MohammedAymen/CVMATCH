@@ -240,16 +240,28 @@ class WuzzufScraper(BaseScraper):
             detail_page = await main_page.context.new_page()
             await detail_page.goto(job_url, timeout=30000, wait_until="domcontentloaded")
 
-            # انتظر إن محتوى الوظيفة يظهر
+            # انتظر إن نص "Job Description"/"وصف الوظيفة" يكون فعلاً موجود في الـ DOM،
+            # مش بس أي h3 عشوائي في الصفحة (اللي كان بيخلي الانتظار يعدي بدري على
+            # بيئات أبطأ زي HF Spaces قبل ما القسم الحقيقي يترندر، فيرجع الاستخراج فاضي).
             try:
-                await detail_page.wait_for_selector(
-                    "section.css-5ks56s, div.css-fo5k8l, div[class*='description'], h3",
-                    timeout=8000,
+                await detail_page.wait_for_function(
+                    """() => {
+                        const t = document.body.innerText;
+                        return t.includes('Job Description') || t.includes('وصف الوظيفة')
+                            || t.includes('Job Requirements') || t.includes('متطلبات الوظيفة');
+                    }""",
+                    timeout=15000,
                 )
             except Exception:
-                pass  
+                logger.warning(f"Job description text never appeared for {job_url} within timeout")
 
             page_text = await detail_page.inner_text("body")
+
+            # لو لسه فاضي (شبكة بطيئة جدًا / محتوى محمّل بعد آخر مصادر)، جرب مرة واحدة
+            # كمان بعد مهلة قصيرة قبل ما نستسلم.
+            if "Job Description" not in page_text and "وصف الوظيفة" not in page_text:
+                await detail_page.wait_for_timeout(3000)
+                page_text = await detail_page.inner_text("body")
 
             description  = self._extract_section(
                 page_text,
