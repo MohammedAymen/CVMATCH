@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from playwright.async_api import async_playwright, Page, Browser, BrowserContext
+from playwright_stealth import Stealth
 
 from core.config import settings
 from core.logger import logger
@@ -19,6 +20,12 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
 ]
+
+# instance واحدة بتتشارك بين كل الـ scrapers — بتحقن init scripts (إخفاء
+# navigator.webdriver، تعديل canvas/webgl fingerprint، إلخ) في أي context جديد
+# بيتعمله. الإعدادات الافتراضية بتاعتها كفاية؛ لو احتجنا نخصص حاجة (زي navigator_platform)
+# نضيفها هنا.
+_stealth = Stealth()
 
 
 class BaseScraper(ABC):
@@ -49,6 +56,11 @@ class BaseScraper(ABC):
                 viewport={"width": 1280, "height": 800},
                 user_agent=random.choice(USER_AGENTS),
             )
+            # نطبّق الـ stealth evasions على الـ context (مش على كل page لوحدها)
+            # عشان أي تاب جديد يتفتح منه (زي تابات صفحات التفاصيل) ياخد نفس
+            # المعالجة أوتوماتيك من غير ما نكررها.
+            await _stealth.apply_stealth_async(self._context)
+            logger.debug(f"[{self.source_name}] Stealth evasions applied to new context")
         page = await self._context.new_page()
         return page
 
