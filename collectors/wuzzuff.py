@@ -263,6 +263,20 @@ class WuzzufScraper(BaseScraper):
                 await detail_page.wait_for_timeout(3000)
                 page_text = await detail_page.inner_text("body")
 
+            # تشخيص: لو لسه فاضي بعد كل المحاولات، سجّل شكل الصفحة اللي فعليًا
+            # اترجعت (عنوان + أول 300 حرف) عشان نعرف إحنا قدام إيه: صفحة تحقق/حظر،
+            # صفحة فاضية، redirect لصفحة تانية، أو حاجة تانية تمامًا.
+            if "Job Description" not in page_text and "وصف الوظيفة" not in page_text:
+                try:
+                    title = await detail_page.title()
+                except Exception:
+                    title = "?"
+                snippet = page_text[:300].replace("\n", " ") if page_text else "(empty)"
+                logger.warning(
+                    f"[diag] url_after_nav={detail_page.url} title='{title}' "
+                    f"body_len={len(page_text)} body_start='{snippet}'"
+                )
+
             description  = self._extract_section(
                 page_text,
                 start_markers=["Job Description", "وصف الوظيفة"],
