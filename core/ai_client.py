@@ -114,6 +114,7 @@ class AIClient:
     ) -> "LLMResponse":
        
         if custom_api_key and custom_base_url:
+            state = self._states[LLMProvider.CUSTOM]
             try:
                 logger.info("🔑 Trying user-supplied custom provider first...")
                 text = self._call_custom(
@@ -126,10 +127,11 @@ class AIClient:
                     model=custom_model or "gpt-4o-mini",
                 )
                 if text:
+                    state.mark_success()
                     logger.info(f"✅ [custom] responded ({len(text)} chars)")
                     return LLMResponse(text=text, provider_used=LLMProvider.CUSTOM)
             except Exception as e:
-                
+                state.mark_failure(backoff_seconds=0.0)  # مفيش cooldown — البديل هو المستخدم نفسه، مش السيرفر
                 logger.warning(f"⚠️ Custom provider failed, falling back to default chain: {e}")
 
         last_error = None
@@ -391,36 +393,98 @@ class AIClient:
         base_url: str,
         model: str,
     ) -> str:
-        
+        # ملاحظة مهمة بتحدد الإستراتيجية هنا: كل الـ LLM APIs بتحاسب على عدد
+        # التوكنز اللي اتولدت فعليًا، مش على قيمة max_tokens اللي انت حاططها
+        # كسقف. يعني رفع السقف مجانًا تمامًا طالما الموديل مش بيوصله فعليًا —
+        # مفيش أي داعي نـ"وفّر" فيه، وتأجيل رفعه لحد ما يحصل قطع بيكلفنا
+        # جولة كاملة ضايعة (المحاولة المقطوعة + إعادة المحاولة) من غير أي
+        # فايدة حقيقية. فبدل ما نبدأ بسقف قليل ونزوده رجعيًا، بنبدأ بسقف
+        # سخي من الأول — الموديلات العادية هتوقف لوحدها قبل ما توصله على أي
+        # حال (finish_reason=stop)، ومفيش تكلفة زيادة عليهم خالص.
+        #
+        # الحماية العامة (تنطبق على أي موديل reasoning، من غير ما نعرف اسمه):
+        #   1) نطلب قفل الـ reasoning صراحة (توفير فعلي لو الـ provider
+        #      بيدعمها — الموديل مش هيفكر أصلاً بدل ما نستناه يفكر ونقطعه).
+        #   2) نطلب response_format=json_object لو الـ provider بيدعمها —
+        #      بتجبر الموديل يرجع JSON صافي من غير مقدمات/markdown، وده كمان
+        #      بيقلل احتمال إنه "يفكر بصوت عالي" جوه الـ content.
+        #   3) لو الـ provider رفض أي حقل من التنين دول بـ 400 (validation
+        #      error قبل أي تنفيذ فعلي — يعني صفر توكنز اتصرفت)، نعيد نفس
+        #      المحاولة من غيره تلقائيًا.
+        #   4) لو الرد اتقطع برضه (finish_reason == "length") رغم السقف
+        #      السخي، نعيد المحاولة بسقف أعلى — شبكة أمان نادرة الاستخدام،
+        #      مش الخط الأول للدفاع.
+        GENEROUS_MAX_TOKENS = max(max_tokens, 8000)
+
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
         url = base_url.rstrip("/") + "/chat/completions"
-        resp = requests.post(
-            url,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
+
+        def _do_request(budget: int, with_reasoning_off: bool, with_json_mode: bool) -> dict:
+            payload = {
                 "model": model,
                 "messages": messages,
                 "temperature": temperature,
-                "max_tokens": max_tokens,
-            },
-            timeout=60,
-        )
+                "max_tokens": budget,
+            }
+            if with_reasoning_off:
+                payload["reasoning"] = {"enabled": False, "exclude": True}
+            if with_json_mode:
+                payload["response_format"] = {"type": "json_object"}
 
-        if resp.status_code == 401:
-            raise ProviderNotConfiguredError("Invalid custom API key")
-        if resp.status_code == 429:
-            raise QuotaExhaustedError("Custom provider rate limit / quota exhausted")
+            resp = requests.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=90,
+            )
+            if resp.status_code == 401:
+                raise ProviderNotConfiguredError("Invalid custom API key")
+            if resp.status_code == 429:
+                raise QuotaExhaustedError("Custom provider rate limit / quota exhausted")
+            if resp.status_code == 400 and (with_reasoning_off or with_json_mode):
+                # الـ provider رافض حقل "reasoning" أو "response_format"
+                # (validation error، مش تنفيذ — يعني صفر توكنز اتصرفت) —
+                # جرب تاني من غيرهم تلقائيًا.
+                logger.debug(
+                    "[custom] Provider rejected reasoning/response_format field "
+                    "(400) — retrying without them"
+                )
+                return _do_request(budget, with_reasoning_off=False, with_json_mode=False)
+            resp.raise_for_status()
+            return resp.json()
 
-        resp.raise_for_status()
-        data = resp.json()
-        return data["choices"][0]["message"]["content"].strip()
+        data = _do_request(GENEROUS_MAX_TOKENS, with_reasoning_off=True, with_json_mode=True)
+        choice = data["choices"][0]
+        finish_reason = choice.get("finish_reason") or choice.get("stop_reason")
+
+        # شبكة أمان نادرة: لو اتقطع رغم السقف السخي من الأول (نص طويل جدًا
+        # فعليًا)، جرب تاني بسقف أعلى — ده بيشتغل مع أي موديل، من غير ما نعرف
+        # اسمه مقدمًا.
+        MAX_RETRY_BUDGET = 24000
+        if finish_reason == "length" and GENEROUS_MAX_TOKENS < MAX_RETRY_BUDGET:
+            retry_budget = min(GENEROUS_MAX_TOKENS * 2, MAX_RETRY_BUDGET)
+            logger.warning(
+                f"⚠️ [custom] Response truncated (finish_reason=length) at "
+                f"max_tokens={GENEROUS_MAX_TOKENS} — retrying with max_tokens={retry_budget}"
+            )
+            data = _do_request(retry_budget, with_reasoning_off=True, with_json_mode=True)
+            choice = data["choices"][0]
+
+        text = choice["message"]["content"].strip()
+
+        # شيل wrapper tags معروفة للـ reasoning لو الموديل حطها جوه الـ content
+        # نفسه (بعض الـ providers بتعمل كده حتى لو الرد مش مقطوع) — ده كشف
+        # عام على شكل الـ tag نفسه مش على اسم موديل معين.
+        text = re.sub(r"<(think|reasoning|thinking)>.*?</\1>", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
+
+        return text
 
     
 
