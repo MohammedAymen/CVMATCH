@@ -45,6 +45,10 @@ class JobSearchRequest(BaseModel):
     location: str = "egypt"
     max_jobs: int = 20
 
+    custom_api_key: Optional[str] = None
+    custom_base_url: Optional[str] = None
+    custom_model: Optional[str] = None
+
 
 class GapDetail(BaseModel):
     skill: str
@@ -374,7 +378,10 @@ async def search_jobs(
         top_k_chunks=10,
         ai_client=app.state.ai_client,   
         max_workers=3,                    
-        cache_scope=user_id,              
+        cache_scope=user_id,
+        custom_api_key=request.custom_api_key,
+        custom_base_url=request.custom_base_url,
+        custom_model=request.custom_model,
     )
     results = pipeline.process_jobs(jobs_dict)
 

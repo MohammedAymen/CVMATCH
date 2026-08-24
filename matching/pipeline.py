@@ -29,6 +29,13 @@ class MatchingPipeline:
         retry_delay: float = 2.0,
         
         cache_scope: Optional[str] = None,
+
+        # BYOK — لو المستخدم مدّى مفتاح خاص بيه من الـ settings، الـ pipeline
+        # تستخدمه بدل الـ chain الافتراضي (Groq → Gemini → Qwen) لكل الوظائف
+        # اللي بتتقيّم في البحث التلقائي، مش بس في التحليل اليدوي.
+        custom_api_key: Optional[str] = None,
+        custom_base_url: Optional[str] = None,
+        custom_model: Optional[str] = None,
     ):
         self.embedder              = embedder
         self.similarity_threshold  = similarity_threshold
@@ -38,6 +45,9 @@ class MatchingPipeline:
         self.max_retries           = max_retries
         self.retry_delay           = retry_delay
         self.cache_scope           = cache_scope
+        self.custom_api_key        = custom_api_key
+        self.custom_base_url       = custom_base_url
+        self.custom_model          = custom_model
 
         if llm_model:
             logger.info(
@@ -79,6 +89,9 @@ class MatchingPipeline:
                     scorer=self._scorer,
                     top_k_chunks=self.top_k_chunks,
                     cache_scope=self.cache_scope,
+                    custom_api_key=self.custom_api_key,
+                    custom_base_url=self.custom_base_url,
+                    custom_model=self.custom_model,
                 )
                 return {"success": True, "score_result": score_result}
 

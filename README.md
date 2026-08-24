@@ -19,8 +19,44 @@ Instead of scrolling through job boards manually, you get a ranked shortlist wit
 
 ---
 
+## Demo
+
+**1. Set up your profile once** — upload your CV (and optionally your GitHub username), and it gets embedded for matching.
+
+![Profile setup](docs/screenshots/01-profile-setup.png)
+
+**2. Two ways to analyze a job** — paste one manually, or let it search live listings automatically.
+
+![Manual job analysis input](docs/screenshots/02-manual-analysis-input.png)
+
+**3. Get a real match score with reasoning** — not just a percentage, but strengths, gaps, and a concrete improvement plan.
+
+![Manual analysis result](docs/screenshots/03-manual-analysis-result.png)
+
+**4. Or run an automatic search** — one query scrapes, scores, and ranks every result in one pass.
+
+![Automatic search input](docs/screenshots/04-auto-search-input.png)
+
+![Automatic search results list](docs/screenshots/05-auto-search-results-list.png)
+
+**5. Expand any result** for the full job description, requirements, and a gap-by-gap breakdown with time estimates.
+
+![Expanded job card with gaps](docs/screenshots/06-job-card-expanded-gaps.png)
+![Job card recommendations](docs/screenshots/07-job-card-recommendations.png)
+
+**6. Everything syncs to a Notion dashboard** for tracking applications over time.
+
+![Notion dashboard](docs/screenshots/08-notion-dashboard.png)
+
+**7. Bring your own API key** (OpenAI, DeepSeek, etc.) from Settings — stored only in your browser's localStorage, never sent to any server but the one you point it at.
+
+![Settings and BYOK](docs/screenshots/09-settings-byok.png)
+
+---
+
 ## Table of contents
 
+- [Demo](#demo)
 - [Quick start](#quick-start)
 - [How it works](#how-it-works)
 - [Tech stack](#tech-stack)
