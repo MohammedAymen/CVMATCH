@@ -29,7 +29,8 @@ COPY . .
 # HF Spaces بيشغل الـ container بـ user مش root - نديله صلاحية على مجلده
 RUN mkdir -p /code/data /code/logs && chmod -R 777 /code/data /code/logs
  
-# Hugging Face Spaces بيستخدم بورت 7860 افتراضياً
+# Hugging Face Spaces بيستخدم بورت 7860 ثابت، لكن Railway وغيره بيحددوا البورت ديناميكياً عبر PORT
+ENV PORT=7860
 EXPOSE 7860
  
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "7860"]
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port $PORT"]
