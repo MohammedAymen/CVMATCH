@@ -400,15 +400,15 @@ python -m evaluation.run_eval --update-readme
 ### Latest results
 
 <!-- RAG_TRIAD_RESULTS_START -->
-_Last run: 2026-08-02 19:13 — 4/5 jobs passed._
+_Last run: 2026-08-25 23:18 — 4/5 jobs passed._
 
 | Job | Context Relevance | Groundedness | Answer Relevance | Avg | Result |
 |---|---|---|---|---|---|
-| Python Backend Developer (FastAPI) | 0.56 | 0.93 | 0.90 | 0.80 | ✅ |
-| Senior Cloud/DevOps Engineer | 0.27 | 0.97 | 0.90 | 0.71 | ✅ |
-| AI/LLM Engineer | 0.61 | 0.88 | 0.90 | 0.80 | ✅ |
-| Enterprise Sales Account Executive | 0.00 | 0.86 | 0.90 | 0.59 | ✅ |
-| Junior QA Tester | 0.31 | 0.95 | 0.00 | 0.42 | ❌ |
+| Python Backend Developer (FastAPI) | 0.52 | 0.77 | 1.00 | 0.76 | ✅ |
+| Senior Cloud/DevOps Engineer | 0.21 | 0.94 | 0.95 | 0.70 | ✅ |
+| AI/LLM Engineer | 0.62 | 1.00 | 0.95 | 0.86 | ✅ |
+| Enterprise Sales Account Executive | 0.00 | 0.96 | 0.95 | 0.64 | ✅ |
+| Junior QA Tester | 0.12 | 0.67 | 0.95 | 0.58 | ❌ |
 <!-- RAG_TRIAD_RESULTS_END -->
 
 Or run it as pytest:
