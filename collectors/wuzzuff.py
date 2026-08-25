@@ -36,6 +36,13 @@ class WuzzufScraper(BaseScraper):
             await page.wait_for_selector("div[class*='css-pkv5jc']", timeout=15000)
         except Exception:
             logger.warning("Timeout waiting for job cards")
+            try:
+                page_title = await page.title()
+                body_text = await page.inner_text("body")
+                logger.warning(f"[debug] Page title: {page_title!r}")
+                logger.warning(f"[debug] Body preview (first 300 chars): {body_text[:300]!r}")
+            except Exception as diag_err:
+                logger.warning(f"[debug] Could not capture diagnostics: {diag_err}")
             await page.context.close()
             return []
 
