@@ -13,9 +13,13 @@ pinned: false
 ![FastAPI](https://img.shields.io/badge/FastAPI-Uvicorn-009688)
 ![Status](https://img.shields.io/badge/status-local%20dev-yellow)
 
+**"Stop scrolling job boards — let your CV do the matching."**
+
 **CVMATCH** is an AI-powered job matching engine. It reads your CV and (optionally) your GitHub profile, embeds them into a vector store, scrapes live job postings, scores each one against your real profile using an LLM, and pushes the qualified matches straight into a Notion dashboard.
 
 Instead of scrolling through job boards manually, you get a ranked shortlist with a match score, a plain-language explanation of *why* it fits, and the actual skill gaps to work on.
+
+[🌐 Live Demo](https://cvfrrontend.vercel.app/) — the backend behind it runs locally for now, see [Setup](#setup)
 
 ---
 
@@ -141,11 +145,12 @@ matching/
   pipeline.py, scorer.py    Similarity search + LLM scoring + score-threshold filtering
 notion/
   dashboard.py               Push results to a Notion database
+scripts/
   upload_checkpoint.py       Resumable upload state
-frontend/
-  Frontend index.html        Single-page UI (Setup / Search / Manual analysis / Settings)
-scripts/                    Manual test scripts per module
+  (+ manual test/debug scripts per module)
 ```
+
+The frontend itself lives in a separate repo, deployed at [cvfrrontend.vercel.app](https://cvfrrontend.vercel.app/) — it's not part of this codebase.
 
 ---
 
@@ -340,6 +345,7 @@ A couple of real issues came up while shaking this project out — documenting t
 - `scripts/` has manual per-module smoke tests. An automated RAG-quality suite now lives in `evaluation/` + `tests/test_rag_triad.py` — see "Testing / RAG Triad evaluation" below.
 - `data/`, `logs/`, and `__pycache__/` should be excluded from version control (`.gitignore`) since real CVs and scrape logs land there during use.
 - Hosted-provider model names (`GROQ_MODELS` in `core/ai_client.py`) are hardcoded and will break silently (404s buried in retry logs) whenever a provider deprecates a model — worth an occasional check against the provider's own deprecation page rather than waiting for it to show up as mysterious rate-limit-looking failures.
+- **Backend cloud deployment (Hugging Face Spaces) is not live yet.** The repo is already set up for it (`sdk: docker`, `app_port: 7860` in the frontmatter above, and the Dockerfile targets port 7860), but the actual Space is still being debugged — for now, run the backend locally (`python main.py`) and point the [deployed frontend](https://cvfrrontend.vercel.app/) at it via the Settings panel.
 
 ---
 
@@ -431,7 +437,7 @@ pytest tests/ -m "not integration"         # skip these in a fast/unit-only run
 
 Because scoring runs through an LLM, a single green pytest run doesn't mean
 much on its own — the same prompt can pass on one run and fail on the next.
-`scripts/run_accuracy_eval.py` (standalone, not part of pytest) repeats the
+`evaluation/run_accuracy_eval.py` (standalone, not part of pytest) repeats the
 golden set N times and reports a **pass-rate percentage per job**, plus the
 overall aggregate and per-metric standard deviation, specifically to
 distinguish "this job is stable" from "this job is flaky":

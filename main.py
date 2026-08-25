@@ -20,7 +20,7 @@ from pydantic import BaseModel
 
 from core.logger import logger
 from core.config import settings
-from core.ai_client import AIClient          # ← الجديد
+from core.ai_client import AIClient, LLMProvider         # ← الجديد
 from profile_data.cv_parser import load_cv_documents
 from profile_data.github_fetcher import load_github_profile_documents
 from profile_data.embedder import build_profile_embeddings, ProfileEmbedder
