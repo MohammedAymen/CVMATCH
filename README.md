@@ -83,7 +83,7 @@ cp .env.example .env        # add at least GROQ_API_KEY or GEMINI_API_KEY
 python main.py               # → http://localhost:8000
 ```
 
-Then open `frontend/Frontend index.html` directly in a browser (no build step, no server needed for the frontend itself) — set the API base URL to `http://localhost:8000` in Settings, and you're ready to run a profile setup + job search.
+The frontend is hosted separately at **[cvfrrontend.vercel.app](https://cvfrrontend.vercel.app/)** — no local setup needed for it. It defaults to talking to a backend running at `http://localhost:8000`, so as long as you have `python main.py` running locally (per above), just open the deployed link and you're ready to run a profile setup + job search. If your backend lives somewhere else, update the API base URL in Settings.
 
 ---
 
@@ -102,9 +102,9 @@ Then open `frontend/Frontend index.html` directly in a browser (no build step, n
 2. **Job search** (`/jobs/search`) — Wuzzuf is scraped for live postings matching your query/location. Each job is compared against your embedded profile.
 3. **Scoring** — Every candidate job is scored by an LLM against your actual CV/GitHub content (not just keyword matching), returning a score, strengths, gaps, and a recommendation.
 4. **Filtering** — Only jobs above the score threshold are kept (handled inline inside `matching/pipeline.py`'s final stage).
-5. **Notion export** — Qualified matches are pushed to a Notion database as a live dashboard, with resumable checkpoints (`notion/upload_checkpoint.py`) in case the upload gets interrupted midway.
+5. **Notion export** — Qualified matches are pushed to a Notion database as a live dashboard, with resumable checkpoints (`scripts/upload_checkpoint.py`) in case the upload gets interrupted midway.
 
-A single-file frontend (`frontend/Frontend index.html`) drives the whole flow — profile setup, job search, manual single-job analysis, and settings (API base URL, BYOK keys, Notion token) — with no build step required.
+The frontend at **[cvfrrontend.vercel.app](https://cvfrrontend.vercel.app/)** drives the whole flow — profile setup, job search, manual single-job analysis, and settings (API base URL, BYOK keys, Notion token).
 
 ---
 
@@ -437,10 +437,14 @@ overall aggregate and per-metric standard deviation, specifically to
 distinguish "this job is stable" from "this job is flaky":
 
 ```bash
-python scripts/run_accuracy_eval.py --runs 5
-python scripts/run_accuracy_eval.py --job "AI/LLM" --runs 3 --verbose   # focus + full failure detail
-python scripts/run_accuracy_eval.py --fast                             # quick check, skips the slow local fallback
+python evaluation/run_accuracy_eval.py --runs 5
+python evaluation/run_accuracy_eval.py --job "AI/LLM" --runs 3 --verbose   # focus one job + full failure detail
 ```
+
+> Note: `scripts/run_accuracy_eval.py` still exists but is an older, stripped-down
+> duplicate (only `--runs`, no `--job`/`--verbose`) — `evaluation/run_accuracy_eval.py`
+> is the one being actively developed. Consider deleting the `scripts/` copy to avoid
+> the two drifting further apart.
 
 ### RAG quality: issues found and fixed via the evaluation harness
 
@@ -508,3 +512,16 @@ This is currently a solo/local project without a formal contribution process. If
 3. Match the existing code style (Arabic inline comments for business logic/reasoning, English for structural/technical comments — this project already mixes both, keep that consistent)
 4. Run the relevant `scripts/test_*.py` smoke test for whatever module was touched before submitting
 5. Anti-bot-sensitive changes (scrapers, new job sources) should include a note on rate limiting / ToS considerations — Wuzzuf is the only source scraped today, deliberately, for exactly that reason
+
+---
+
+## 👨‍💻 Author
+
+**Mohamed Aymen Salem** — AI Engineer & Developer
+Machine Learning · Computer Vision · NLP
+
+[![GitHub](https://img.shields.io/badge/GitHub-181717?logo=github&logoColor=white)](https://github.com/MohammedAymen)
+[![Portfolio](https://img.shields.io/badge/Portfolio-000000?logo=vercel&logoColor=white)](https://portfolio-wine-nine-73.vercel.app/)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?logo=linkedin&logoColor=white)](https://www.linkedin.com/in/mohamed-aymen-750236225)
+
+If this project was useful or interesting, a ⭐ on the repo helps others find it.
