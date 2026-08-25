@@ -15,7 +15,7 @@ COPY ./requirements.txt /code/requirements.txt
 
 # نثبّت نسخة CPU-only من torch الأول (أصغر بكتير من نسخة CUDA اللي pip بيسحبها افتراضي - ~250MB بدل 2GB+)
 # مش محتاجين GPU أصلاً على أي free tier، فده بيوفر مساحة ضخمة من غير أي خسارة في الوظيفة
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+RUN pip install --no-cache-dir torch --extra-index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir --upgrade -r /code/requirements.txt
  
 # تثبيت متصفح Chromium + الـ system libraries اللي محتاجها
