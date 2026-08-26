@@ -249,33 +249,6 @@ async def health_check():
     }
 
 
-# ⚠️ endpoint مؤقت للتشخيص بس - امسحه بعد ما تخلص تجربة cloudscraper
-@app.get("/debug/cloudscraper-test")
-async def debug_cloudscraper_test():
-    import cloudscraper
-    scraper = cloudscraper.create_scraper(
-        browser={"browser": "chrome", "platform": "windows", "mobile": False}
-    )
-    url = "https://wuzzuf.net/search/jobs?q=ai+engineer&l=egypt"
-    try:
-        response = scraper.get(url, timeout=20)
-        text = response.text
-        if "Just a moment" in text or "Performing security verification" in text:
-            result = "blocked_by_cloudflare"
-        elif "css-pkv5jc" in text:
-            result = "success_found_job_cards"
-        else:
-            result = "unexpected_content"
-        return {
-            "result": result,
-            "status_code": response.status_code,
-            "content_length": len(text),
-            "preview": text[:300],
-        }
-    except Exception as e:
-        return {"result": "exception", "error": str(e)}
-
-
 @app.post("/profile/setup", response_model=ProfileSetupResponse)
 async def setup_profile(
     cv_file: Optional[UploadFile] = File(None),
