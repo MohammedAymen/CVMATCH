@@ -38,7 +38,10 @@ class BaseScraper(ABC):
     async def _init_browser(self):
         if self._browser is None:
             self._playwright = await async_playwright().start()
-            self._browser = await self._playwright.chromium.launch(headless=self.headless)
+            self._browser = await self._playwright.chromium.launch(
+                headless=self.headless,
+                args=["--disable-blink-features=AutomationControlled"],
+            )
             logger.info(f"[{self.source_name}] Browser launched (headless={self.headless})")
         return self._browser
 
@@ -48,6 +51,8 @@ class BaseScraper(ABC):
             self._context = await browser.new_context(
                 viewport={"width": 1280, "height": 800},
                 user_agent=random.choice(USER_AGENTS),
+                locale="en-US",
+                timezone_id="Africa/Cairo",  # يطابق موقع الوظايف اللي بنجيبها (مصر)
             )
 
         page = await self._context.new_page()
