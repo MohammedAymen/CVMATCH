@@ -6,6 +6,7 @@ numpy
 tenacity
 loguru
 playwright
+playwright-stealth
 langchain-text-splitters
 sentence-transformers
 chromadb

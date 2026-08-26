@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from playwright.async_api import async_playwright, Page, Browser, BrowserContext
+from playwright_stealth import Stealth
 
 
 from core.config import settings
@@ -20,6 +21,8 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
 ]
+
+_stealth = Stealth()
 
 class BaseScraper(ABC):
     source_name: str = "unknown"
@@ -54,6 +57,7 @@ class BaseScraper(ABC):
                 locale="en-US",
                 timezone_id="Africa/Cairo",  # يطابق موقع الوظايف اللي بنجيبها (مصر)
             )
+            await _stealth.apply_stealth_async(self._context)
 
         page = await self._context.new_page()
         return page
